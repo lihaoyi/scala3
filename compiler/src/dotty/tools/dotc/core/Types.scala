@@ -1973,7 +1973,7 @@ object Types extends TypeUtils {
         else {
           val from2 = from1.tail
           if (from2.isEmpty) Substituters.subst2(this, from.head, to.head, from1.head, to.tail.head, null)
-          else Substituters.subst(this, from, to, null)
+          else Substituters.subst(this, Substituters.listToSymArray(from), Substituters.listToTypeArray(to), null)
         }
       }
 
@@ -2001,7 +2001,7 @@ object Types extends TypeUtils {
 
     /** Substitute bound types by some other types */
     final def substParams(from: BindingType, to: List[Type])(using Context): Type =
-      Substituters.substParams(this, from, to, null)
+      Substituters.substParams(this, from, Substituters.listToTypeArray(to), null)
 
     /** Substitute all occurrences of symbols in `from` by references to corresponding symbols in `to`
      */
@@ -2010,14 +2010,14 @@ object Types extends TypeUtils {
       // pass empty `from`/`to`, where the substitution is a no-op but still walks
       // the entire type via SubstSymMap. Avoid the traversal entirely.
       if from.isEmpty then this
-      else Substituters.substSym(this, from, to, null)
+      else Substituters.substSym(this, Substituters.listToSymArray(from), Substituters.listToSymArray(to), null)
 
     /** Substitute all occurrences of symbols in `from` by corresponding types in `to`.
      *  Unlike for `subst`, the `to` types can be type bounds. A TypeBounds target
      *  will be replaced by range that gets absorbed in an approximating type map.
      */
     final def substApprox(from: List[Symbol], to: List[Type])(using Context): Type =
-      new Substituters.SubstApproxMap(from, to).apply(this)
+      new Substituters.SubstApproxMap(Substituters.listToSymArray(from), Substituters.listToTypeArray(to)).apply(this)
 
 // ----- misc -----------------------------------------------------------
 

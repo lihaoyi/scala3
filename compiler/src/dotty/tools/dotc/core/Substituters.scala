@@ -20,6 +20,7 @@ object Substituters:
         tp
       case tp: AppliedType =>
         tp.map(subst(_, from, to, theMap))
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new SubstBindingMap(from, to))
           .mapOver(tp)
@@ -34,6 +35,7 @@ object Substituters:
         else tp.derivedSelect(subst1(tp.prefix, from, to, theMap))
       case _: ThisType | _: BoundType =>
         tp
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new Subst1Map(from, to))
           .mapOver(tp)
@@ -49,57 +51,57 @@ object Substituters:
         else tp.derivedSelect(subst2(tp.prefix, from1, to1, from2, to2, theMap))
       case _: ThisType | _: BoundType =>
         tp
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new Subst2Map(from1, to1, from2, to2))
           .mapOver(tp)
     }
 
-  final def subst(tp: Type, from: List[Symbol], to: List[Type], theMap: SubstMap | Null)(using Context): Type =
+  final def subst(tp: Type, from: Array[Symbol], to: Array[Type], theMap: SubstMap | Null)(using Context): Type =
     tp match {
       case tp: NamedType =>
         val sym = tp.symbol
-        var fs = from
-        var ts = to
-        while (fs.nonEmpty && ts.nonEmpty) {
-          if (fs.head eq sym) return ts.head
-          fs = fs.tail
-          ts = ts.tail
+        val n = math.min(from.length, to.length)
+        var i = 0
+        while (i < n) {
+          if (from(i) eq sym) return to(i)
+          i += 1
         }
         if (tp.prefix `eq` NoPrefix) tp
         else tp.derivedSelect(subst(tp.prefix, from, to, theMap))
       case _: ThisType | _: BoundType =>
         tp
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new SubstMap(from, to))
           .mapOver(tp)
     }
 
-  final def substSym(tp: Type, from: List[Symbol], to: List[Symbol], theMap: SubstSymMap | Null)(using Context): Type =
+  final def substSym(tp: Type, from: Array[Symbol], to: Array[Symbol], theMap: SubstSymMap | Null)(using Context): Type =
     tp match {
       case tp: NamedType =>
         val sym = tp.symbol
-        var fs = from
-        var ts = to
-        while (fs.nonEmpty) {
-          if (fs.head eq sym)
-            return substSym(tp.prefix, from, to, theMap).select(ts.head)
-          fs = fs.tail
-          ts = ts.tail
+        val n = from.length
+        var i = 0
+        while (i < n) {
+          if (from(i) eq sym)
+            return substSym(tp.prefix, from, to, theMap).select(to(i))
+          i += 1
         }
         if (tp.prefix `eq` NoPrefix) tp
         else tp.derivedSelect(substSym(tp.prefix, from, to, theMap))
       case tp: ThisType =>
         val sym = tp.cls
-        var fs = from
-        var ts = to
-        while (fs.nonEmpty) {
-          if (fs.head eq sym) return ts.head.asClass.thisType
-          fs = fs.tail
-          ts = ts.tail
+        val n = from.length
+        var i = 0
+        while (i < n) {
+          if (from(i) eq sym) return to(i).asClass.thisType
+          i += 1
         }
         tp
       case _: BoundType =>
         tp
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new SubstSymMap(from, to))
           .mapOver(tp)
@@ -114,6 +116,7 @@ object Substituters:
         else tp.derivedSelect(substThis(tp.prefix, from, to, theMap))
       case _: BoundType =>
         tp
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new SubstThisMap(from, to))
           .mapOver(tp)
@@ -128,6 +131,7 @@ object Substituters:
         else tp.derivedSelect(substRecThis(tp.prefix, from, to, theMap))
       case _: ThisType | _: BoundType =>
         tp
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new SubstRecThisMap(from, to))
           .mapOver(tp)
@@ -142,12 +146,13 @@ object Substituters:
         else tp.derivedSelect(substParam(tp.prefix, from, to, theMap))
       case _: ThisType =>
         tp
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new SubstParamMap(from, to))
           .mapOver(tp)
     }
 
-  final def substParams(tp: Type, from: BindingType, to: List[Type], theMap: SubstParamsMap | Null)(using Context): Type =
+  final def substParams(tp: Type, from: BindingType, to: Array[Type], theMap: SubstParamsMap | Null)(using Context): Type =
     tp match {
       case tp: ParamRef =>
         if (tp.binder == from) to(tp.paramNum) else tp
@@ -158,6 +163,7 @@ object Substituters:
         tp
       case tp: AppliedType =>
         tp.map(substParams(_, from, to, theMap))
+      case _ if tp eq NoPrefix => tp
       case _ =>
         (if (theMap != null) theMap else new SubstParamsMap(from, to))
           .mapOver(tp)
@@ -219,11 +225,11 @@ object Substituters:
     def apply(tp: Type): Type = subst2(tp, from1, to1, from2, to2, this)(using mapCtx)
   }
 
-  final class SubstMap(from: List[Symbol], to: List[Type])(using Context) extends DeepTypeMap {
+  final class SubstMap(val from: Array[Symbol], val to: Array[Type])(using Context) extends DeepTypeMap {
     def apply(tp: Type): Type = subst(tp, from, to, this)(using mapCtx)
   }
 
-  final class SubstSymMap(from: List[Symbol], to: List[Symbol])(using Context) extends DeepTypeMap {
+  final class SubstSymMap(val from: Array[Symbol], val to: Array[Symbol])(using Context) extends DeepTypeMap {
     def apply(tp: Type): Type = substSym(tp, from, to, this)(using mapCtx)
     def inverse = SubstSymMap(to, from) // implicitly requires that `to` contains no duplicates.
   }
@@ -240,25 +246,24 @@ object Substituters:
     def apply(tp: Type): Type = substParam(tp, from, to, this)(using mapCtx)
   }
 
-  final class SubstParamsMap(from: BindingType, to: List[Type])(using Context) extends DeepTypeMap {
+  final class SubstParamsMap(val from: BindingType, val to: Array[Type])(using Context) extends DeepTypeMap {
     def apply(tp: Type): Type = substParams(tp, from, to, this)(using mapCtx)
   }
 
   /** An approximating substitution that can handle wildcards in the `to` list */
-  final class SubstApproxMap(from: List[Symbol], to: List[Type])(using Context) extends ApproximatingTypeMap {
+  final class SubstApproxMap(val from: Array[Symbol], val to: Array[Type])(using Context) extends ApproximatingTypeMap {
     def apply(tp: Type): Type = tp match {
       case tp: NamedType =>
         val sym = tp.symbol
-        var fs = from
-        var ts = to
-        while (fs.nonEmpty && ts.nonEmpty) {
-          if (fs.head eq sym)
-            return ts.head match {
+        val n = math.min(from.length, to.length)
+        var i = 0
+        while (i < n) {
+          if (from(i) eq sym)
+            return to(i) match {
               case TypeBounds(lo, hi) => range(lo, hi)
               case tp1 => tp1
             }
-          fs = fs.tail
-          ts = ts.tail
+          i += 1
         }
         if (tp.prefix `eq` NoPrefix) tp else derivedSelect(tp, apply(tp.prefix))
       case _: ThisType | _: BoundType =>
@@ -267,4 +272,35 @@ object Substituters:
         mapOver(tp)
     }
   }
+
+  // ---- Internal helpers -------------------------------------------------
+
+  /** Convert a `List[Symbol]` to an `Array[Symbol]`. Used at the public
+   *  boundary to convert from the user-facing List API to the internal
+   *  array-based storage (faster index access and cache locality during
+   *  the main type-traversal loop).
+   */
+  def listToSymArray(xs: List[Symbol]): Array[Symbol] =
+    if xs.isEmpty then emptySymArray
+    else
+      val n = xs.length
+      val arr = new Array[Symbol](n)
+      var i = 0
+      var cur = xs
+      while (i < n) { arr(i) = cur.head; cur = cur.tail; i += 1 }
+      arr
+
+  /** Convert a `List[Type]` to an `Array[Type]`. */
+  def listToTypeArray(xs: List[Type]): Array[Type] =
+    if xs.isEmpty then emptyTypeArray
+    else
+      val n = xs.length
+      val arr = new Array[Type](n)
+      var i = 0
+      var cur = xs
+      while (i < n) { arr(i) = cur.head; cur = cur.tail; i += 1 }
+      arr
+
+  private val emptySymArray: Array[Symbol] = new Array[Symbol](0)
+  private val emptyTypeArray: Array[Type] = new Array[Type](0)
 end Substituters

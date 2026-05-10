@@ -124,21 +124,58 @@ object Denotations {
     /** Map `f` over all single denotations and aggregate the results with `g`. */
     def aggregate[T](f: SingleDenotation => T, g: (T, T) => T): T
 
-    private var cachedPrefix: Type = uninitialized
-    private var cachedAsSeenFrom: AsSeenFromResult = uninitialized
-    private var validAsSeenFrom: Period = Nowhere
+    // 4-way AsSeenFrom cache (Design A: 12 inline fields + round-robin slot).
+    // Profiling on the Mill libs.javalib corpus shows ~14% of asSeenFrom misses
+    // are pure 1-slot prefix-thrash — multiple denotations alternating between
+    // a few prefixes. A 4-slot cache absorbs that thrash with no rehash cost.
+    private var cachedPrefix0: Type = uninitialized
+    private var cachedAsSeenFrom0: AsSeenFromResult = uninitialized
+    private var validAsSeenFrom0: Period = Nowhere
+    private var cachedPrefix1: Type = uninitialized
+    private var cachedAsSeenFrom1: AsSeenFromResult = uninitialized
+    private var validAsSeenFrom1: Period = Nowhere
+    private var cachedPrefix2: Type = uninitialized
+    private var cachedAsSeenFrom2: AsSeenFromResult = uninitialized
+    private var validAsSeenFrom2: Period = Nowhere
+    private var cachedPrefix3: Type = uninitialized
+    private var cachedAsSeenFrom3: AsSeenFromResult = uninitialized
+    private var validAsSeenFrom3: Period = Nowhere
+    private var nextSlot: Byte = 0
 
     type AsSeenFromResult <: PreDenotation
+
+    /** Override hook: returns true iff `computeAsSeenFrom(pre)` would just
+     *  return `this` unchanged. Used to short-circuit the cache write so
+     *  identity-passthrough calls don't evict useful entries. Default: false
+     *  (only `SingleDenotation` overrides this with the actual predicate).
+     */
+    protected def isIdentityASF(pre: Type)(using Context): Boolean = false
 
     /** The denotation with info(s) as seen from prefix type */
     def asSeenFrom(pre: Type)(using Context): AsSeenFromResult =
       if (Config.cacheAsSeenFrom) {
-        if ((cachedPrefix ne pre) || ctx.period != validAsSeenFrom) {
-          cachedAsSeenFrom = computeAsSeenFrom(pre)
-          cachedPrefix = pre
-          validAsSeenFrom = if (pre.isProvisional) Nowhere else ctx.period
+        val period = ctx.period
+        // 1. Cache hit fast path: scan 4 slots.
+        if ((cachedPrefix0 eq pre) && period == validAsSeenFrom0) cachedAsSeenFrom0
+        else if ((cachedPrefix1 eq pre) && period == validAsSeenFrom1) cachedAsSeenFrom1
+        else if ((cachedPrefix2 eq pre) && period == validAsSeenFrom2) cachedAsSeenFrom2
+        else if ((cachedPrefix3 eq pre) && period == validAsSeenFrom3) cachedAsSeenFrom3
+        // 2. Identity passthrough: don't pollute cache.
+        else if (isIdentityASF(pre)) this.asInstanceOf[AsSeenFromResult]
+        // 3. Compute + write cache (round-robin).
+        else {
+          val r = computeAsSeenFrom(pre)
+          val v = if (pre.isProvisional) Nowhere else period
+          val slot = nextSlot
+          nextSlot = ((slot + 1) & 3).toByte
+          slot match {
+            case 0 => cachedAsSeenFrom0 = r; cachedPrefix0 = pre; validAsSeenFrom0 = v
+            case 1 => cachedAsSeenFrom1 = r; cachedPrefix1 = pre; validAsSeenFrom1 = v
+            case 2 => cachedAsSeenFrom2 = r; cachedPrefix2 = pre; validAsSeenFrom2 = v
+            case _ => cachedAsSeenFrom3 = r; cachedPrefix3 = pre; validAsSeenFrom3 = v
+          }
+          r
         }
-        cachedAsSeenFrom
       }
       else computeAsSeenFrom(pre)
 
@@ -1088,6 +1125,28 @@ object Denotations {
     def aggregate[T](f: SingleDenotation => T, g: (T, T) => T): T = f(this)
 
     type AsSeenFromResult = SingleDenotation
+
+    /** Mirrors the early-return predicate at line ~1131 of `computeAsSeenFrom`:
+     *  if true, then `computeAsSeenFrom(pre)` returns `this` unchanged.
+     *  Hoisting this check above the cache-write avoids polluting the cache
+     *  with identity-passthrough entries.
+     */
+    override protected def isIdentityASF(pre: Type)(using Context): Boolean =
+      val sym = this.symbol
+      sym.is(NonMember) || {
+        val owner = this match
+          case sd: SymDenotation => sd.owner
+          case _ => if (sym.exists) sym.owner else NoSymbol
+        !owner.membersNeedAsSeenFrom(pre) && {
+          def ownerIsPrefix = pre match
+            case pre: ThisType => pre.sameThis(owner.thisType)
+            case _ => false
+          def hasOriginalInfo = this match
+            case _: SymDenotation => true
+            case _ => info eq sym.info
+          !ownerIsPrefix || hasOriginalInfo
+        }
+      }
 
     protected def computeAsSeenFrom(pre: Type)(using Context): SingleDenotation = {
       val symbol = this.symbol

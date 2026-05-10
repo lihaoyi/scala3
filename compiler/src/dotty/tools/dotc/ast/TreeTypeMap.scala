@@ -57,11 +57,13 @@ class TreeTypeMap(
    *  by the corresponding `This(newOwner)`.
    */
   private val mapOwnerThis = new TypeMap {
-    private def mapPrefix(from: List[Symbol], to: List[Symbol], tp: Type): Type = from match {
-      case Nil => tp
-      case (cls: ClassSymbol) :: from1 => mapPrefix(from1, to.tail, tp.substThis(cls, to.head.thisType))
-      case _ :: from1 => mapPrefix(from1, to.tail, tp)
-    }
+    private def mapPrefix(from: List[Symbol], to: List[Symbol], tp: Type): Type =
+      if (tp `eq` NoPrefix) tp
+      else from match {
+        case Nil => tp
+        case (cls: ClassSymbol) :: from1 => mapPrefix(from1, to.tail, tp.substThis(cls, to.head.thisType))
+        case _ :: from1 => mapPrefix(from1, to.tail, tp)
+      }
     def apply(tp: Type): Type = tp match {
       case tp: NamedType => tp.derivedSelect(mapPrefix(oldOwners, newOwners, tp.prefix))
       case _ => mapOver(tp)

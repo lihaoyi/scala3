@@ -443,7 +443,7 @@ sealed abstract class CaptureSet extends Showable:
 
   /** A mapping resulting from substituting parameters of a BindingType to a list of types */
   def substParams(tl: BindingType, to: List[Type])(using Context) =
-    map(Substituters.SubstParamsMap(tl, to))
+    map(Substituters.SubstParamsMap(tl, Substituters.listToTypeArray(to)))
 
   def maybe(using Context): CaptureSet = map(MaybeMap())
 
