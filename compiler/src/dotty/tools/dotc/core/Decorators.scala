@@ -202,21 +202,19 @@ object Decorators {
       loop(xs, ys)
     }
 
-    @tailrec final def eqElements(ys: List[AnyRef]): Boolean = xs match {
-      case x :: xsTail =>
-        ys match {
-          case y :: ysTail =>
-            // Most type-argument / param-name lists are 1 element.
-            // Combining the head-eq check with an early-out for the
-            // common 1-element case avoids an extra recursive call
-            // and the allocation-free `Nil` pattern match.
-            (x.asInstanceOf[AnyRef] eq y) && {
-              if xsTail.isEmpty then ysTail.isEmpty
-              else xsTail.eqElements(ysTail)
-            }
-          case _ => false
-        }
-      case nil => ys.isEmpty
+    final def eqElements(ys: List[AnyRef]): Boolean = {
+      // Hand-rolled while loop: avoids the `::`/`Nil` pattern matches and
+      // tail-recursive call site. This method is hot (called from Type
+      // hash-cons / argument equality) so the few-instruction win matters.
+      var a: List[T] = xs
+      var b: List[AnyRef] = ys
+      while (a ne Nil) {
+        if (b eq Nil) return false
+        if (a.head.asInstanceOf[AnyRef] ne b.head) return false
+        a = a.tail
+        b = b.tail
+      }
+      b eq Nil
     }
 
     /** Union on lists seen as sets */

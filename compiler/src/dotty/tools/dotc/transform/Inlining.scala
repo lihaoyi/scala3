@@ -92,7 +92,15 @@ class Inlining extends MacroTransform, IdentityDenotTransformer {
   def newTransformer(using Context): Transformer = new Transformer {
     override def transform(tree: tpd.Tree)(using Context): tpd.Tree =
       val rec = ctx.compilationUnit.depRecorder
-      val collector = ExtractInlineDependenciesCollector(rec)
+      // Mirror the gating in `ExtractDependencies` (see ExtractDependencies.isRunnable):
+      // if Zinc is not consuming dependency info AND we are not dumping the sbt-inc
+      // file, skip the per-tree dependency collector entirely. The collector
+      // (`recordTree` -> `addTypeDependency`) is allocation-heavy and runs
+      // millions of times on real corpora.
+      val needsDeps = ctx.runZincPhases || ctx.settings.YdumpSbtInc.value
+      val collector =
+        if needsDeps then ExtractInlineDependenciesCollector(rec)
+        else null
       InliningTreeMap(collector).transform(tree)
   }
 
@@ -105,32 +113,34 @@ class Inlining extends MacroTransform, IdentityDenotTransformer {
       traverseChildren(tree)
   end ExtractInlineDependenciesCollector
 
-  private class InliningTreeMap(collector: ExtractInlineDependenciesCollector) extends TreeMapWithTrackedStats {
+  private class InliningTreeMap(collector: ExtractInlineDependenciesCollector | Null) extends TreeMapWithTrackedStats {
 
     /** List of top level classes added by macro annotation in a package object.
      *  These are added to the PackageDef that owns this particular package object.
      */
     private val newTopClasses = MutableSymbolMap[mutable.ListBuffer[Tree]]()
 
-    val inlineFinder = new tpd.TreeTraverser:
-      override def traverse(tree: Tree)(using Context): Unit =
-        try
-          tree match
-            case tree: Inlined =>
-              collector.traverse(tree)
-            case vd: ValDef if vd.symbol.is(ModuleVal) =>
-              // Don't visit module val
-            case t: Template if t.symbol.owner.is(ModuleClass) =>
-              // Don't visit self type of module class
-              traverse(t.constr)
-              t.parents.foreach(traverse)
-              t.body.foreach(traverse)
-            case _ =>
-              traverseChildren(tree)
-        catch
-          case ex: AssertionError =>
-            println(i"asserted failed while traversing $tree")
-            throw ex
+    val inlineFinder: tpd.TreeTraverser | Null = collector match
+      case null => null
+      case nonNullCollector => new tpd.TreeTraverser:
+        override def traverse(tree: Tree)(using Context): Unit =
+          try
+            tree match
+              case tree: Inlined =>
+                nonNullCollector.traverse(tree)
+              case vd: ValDef if vd.symbol.is(ModuleVal) =>
+                // Don't visit module val
+              case t: Template if t.symbol.owner.is(ModuleClass) =>
+                // Don't visit self type of module class
+                traverse(t.constr)
+                t.parents.foreach(traverse)
+                t.body.foreach(traverse)
+              case _ =>
+                traverseChildren(tree)
+          catch
+            case ex: AssertionError =>
+              println(i"asserted failed while traversing $tree")
+              throw ex
 
     override def transform(tree: Tree)(using Context): Tree = {
       val result = tree match
@@ -161,7 +171,8 @@ class Inlining extends MacroTransform, IdentityDenotTransformer {
                 if tree1.tpe.isError then tree1
                 else Inlines.inlineCall(tree1)
           else super.transform(tree)
-      inlineFinder.traverse(result)
+      val finder = inlineFinder
+      if finder != null then finder.traverse(result)
       result
     }
 

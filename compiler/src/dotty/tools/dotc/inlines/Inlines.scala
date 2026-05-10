@@ -598,7 +598,11 @@ object Inlines:
       // different for bindings from arguments and bindings from body.
       val inlined = tpd.Inlined(call, bindings, expansion)
 
-      val hasOpaquesInResultFromCallWithTransparentContext =
+      // Defer this until the consumer needs it: the predicate is allocation-heavy
+      // (builds an owner Set and walks `call.tpe`) and the consumer below
+      // short-circuits on `hasOpaqueProxies`, which is true for the bulk of
+      // callsites in real corpora.
+      def hasOpaquesInResultFromCallWithTransparentContext =
         val owners = call.symbol.ownersIterator.toSet
         call.tpe.widenTermRefExpr.existsPart(
           part => part.typeSymbol.is(Opaque) && owners.contains(part.typeSymbol.owner)

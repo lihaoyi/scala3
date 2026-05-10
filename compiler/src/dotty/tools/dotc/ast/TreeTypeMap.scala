@@ -81,7 +81,9 @@ class TreeTypeMap(
             case tp: TermRef if tp.symbol.isImport => mapOver(tp)
             case tp => tp.substSym(substFrom, substTo)
         substMap(mappedTp)
-    mapOwnerThis(substituted)
+    // Fast path: when there are no owner remappings, mapOwnerThis is the
+    // identity. Skip allocating the TypeMap walk in that case.
+    if oldOwners.isEmpty then substituted else mapOwnerThis(substituted)
   end mapType
 
   private def updateDecls(prevStats: List[Tree], newStats: List[Tree]): Unit =
