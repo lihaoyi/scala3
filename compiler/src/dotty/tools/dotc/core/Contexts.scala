@@ -62,8 +62,18 @@ object Contexts {
   // phase casts on access. Migrated from a `Property.StickyKey[RefInfos]`
   // (immutable Map.get + Option allocation) to Store (raw array index).
   val (refInfosLoc,                 store12) = store11.newLocation[AnyRef | Null]()
+  // CyclicReference.Trace: was a Property.Key[mutable.ArrayBuffer[TraceElement]].
+  // Hot path: ctx.property(Trace) called 24M times per Mill libs.javalib compile
+  // (78% of all property reads) by `trace` helpers on every typer call when
+  // -explain-cyclic is on (always-on in Mill's scalac-options).
+  val (ctTraceLoc,                  store13) = store12.newLocation[AnyRef | Null]()
+  // InlinedCalls / InlinedTrees: tpd.inlineContext writes (841k setProperty
+  // calls/compile, 91% of total) and enclosingInlineds reads (1.02M).
+  // Typed as AnyRef|Null because tpd lives in `ast` and Contexts in `core`.
+  val (inlinedCallsLoc,             store14) = store13.newLocation[AnyRef | Null]()
+  val (inlinedTreesLoc,             store15) = store14.newLocation[AnyRef | Null]()
 
-  private val initialStore = store12
+  private val initialStore = store15
 
   /** The current context */
   inline def ctx(using ctx: Context): Context = ctx

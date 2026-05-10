@@ -10,7 +10,7 @@ import typer.{ConstFold, ProtoTypes}
 import transform.{Erasure, ExplicitOuter}
 import config.{Feature, Printers}
 import Printers.typr
-import util.{Property, SourceFile, Spans}
+import util.{SourceFile, Spans}
 import Spans.*
 
 import scala.annotation.tailrec
@@ -1459,14 +1459,14 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
   def joinArgs(targs: List[Tree], argss: List[List[Tree]]): List[List[Tree]] =
     if targs.isEmpty then argss else targs :: argss
 
-  /** A key to be used in a context property that tracks enclosing inlined calls */
-  private val InlinedCalls = Property.Key[List[Tree]]()
-
-  /** A key to be used in a context property that tracks the number of inlined trees */
-  private val InlinedTrees = Property.Key[Counter]()
   final class Counter {
     var count: Int = 0
   }
+
+  // Note: InlinedCalls (List[Tree]) and InlinedTrees (Counter) were migrated
+  // from Property.Key to Contexts.inlinedCallsLoc / inlinedTreesLoc (Store).
+  // setProperty was 841k calls/compile (91% of total); enclosingInlineds read
+  // 1.02M times. Typed as AnyRef|Null in Contexts (layering); cast on access.
 
   /** Record an enclosing inlined call.
    *  EmptyTree calls (for parameters) cancel the next-enclosing call in the list instead of being added to it.
@@ -1484,24 +1484,25 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
       else
         tree.call :: oldIC
 
-    val ctx1 = ctx.fresh.setProperty(InlinedCalls, newIC)
-    if oldIC.isEmpty then ctx1.setProperty(InlinedTrees, new Counter) else ctx1
+    val ctx1 = ctx.fresh.updateStore(Contexts.inlinedCallsLoc, newIC)
+    if oldIC.isEmpty then ctx1.updateStore(Contexts.inlinedTreesLoc, new Counter) else ctx1
   }
 
   /** All enclosing calls that are currently inlined, from innermost to outermost.
    */
   def enclosingInlineds(using Context): List[Tree] =
-    ctx.property(InlinedCalls).getOrElse(Nil)
+    val v = ctx.store(Contexts.inlinedCallsLoc)
+    if v == null then Nil else v.asInstanceOf[List[Tree]]
 
   /** Record inlined trees */
   def addInlinedTrees(n: Int)(using Context): Unit =
-    ctx.property(InlinedTrees).foreach(_.count += n)
+    val c = ctx.store(Contexts.inlinedTreesLoc)
+    if c != null then c.asInstanceOf[Counter].count += n
 
   /** Check if the limit on the number of inlined trees has been reached */
   def reachedInlinedTreesLimit(using Context): Boolean =
-    ctx.property(InlinedTrees) match
-      case Some(c) => c.count > ctx.settings.XmaxInlinedTrees.value
-      case None => false
+    val c = ctx.store(Contexts.inlinedTreesLoc)
+    c != null && c.asInstanceOf[Counter].count > ctx.settings.XmaxInlinedTrees.value
 
   /** The source file where the symbol of the `inline` method referred to by `call`
    *  is defined

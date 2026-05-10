@@ -12,7 +12,6 @@ import Denotations.*
 import Decorators.*
 import reporting.*
 import ast.untpd
-import util.Property
 import config.Printers.{cyclicErrors, noPrinter}
 import collection.mutable
 
@@ -205,7 +204,8 @@ extends TypeError:
 object CyclicReference:
 
   def apply(denot: SymDenotation)(using Context): CyclicReference =
-    val ex = new CyclicReference(denot, ctx.property(Trace).map(_.toArray))
+    val trace = ctx.store(Contexts.ctTraceLoc).asInstanceOf[Trace | Null]
+    val ex = new CyclicReference(denot, if trace == null then None else Some(trace.toArray))
     if ex.computeStackTrace then
       cyclicErrors.println(s"Cyclic reference involving $denot")
       val sts = ex.getStackTrace.asInstanceOf[Array[StackTraceElement]]
@@ -215,18 +215,19 @@ object CyclicReference:
 
   type TraceElement = Context ?=> String
   type Trace = mutable.ArrayBuffer[TraceElement]
-  val Trace = Property.Key[Trace]
 
-  private def isTraced(using Context) =
-    ctx.property(CyclicReference.Trace).isDefined
+  // Note: migrated from Property.Key[Trace] to Contexts.ctTraceLoc (Store) —
+  // ctx.property(Trace) was 24M calls/compile (78% of all property reads).
+  private def isTraced(using Context): Boolean =
+    ctx.store(Contexts.ctTraceLoc) != null
 
   private def pushTrace(info: TraceElement)(using Context): Unit =
-    for buf <- ctx.property(CyclicReference.Trace) do
-      buf += info
+    val buf = ctx.store(Contexts.ctTraceLoc).asInstanceOf[Trace | Null]
+    if buf != null then buf += info
 
   private def popTrace()(using Context): Unit =
-    for buf <- ctx.property(CyclicReference.Trace) do
-      buf.dropRightInPlace(1)
+    val buf = ctx.store(Contexts.ctTraceLoc).asInstanceOf[Trace | Null]
+    if buf != null then buf.dropRightInPlace(1)
 
   inline def trace[T](info: TraceElement)(inline op: => T)(using Context): T =
     val traceCycles = isTraced

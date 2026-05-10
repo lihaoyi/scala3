@@ -440,7 +440,7 @@ extends ImplicitRunInfo, ConstraintRunInfo, cc.CaptureRunInfo {
 
     val fusedPhases = runCtx.base.allPhases
     if ctx.settings.explainCyclic.value then
-      runCtx.setProperty(CyclicReference.Trace, new CyclicReference.Trace())
+      runCtx.updateStore(Contexts.ctTraceLoc, new CyclicReference.Trace())
     runCtx.withProgressCallback: cb =>
       _progress = Progress(cb, this, fusedPhases.map(_.traversals).sum)
     val cancelAsyncTasty: () => Unit =
