@@ -57,8 +57,13 @@ object Contexts {
   private val (importInfoLoc,        store9) = store8.newLocation[ImportInfo | Null]()
   private val (typeAssignerLoc,     store10) = store9.newLocation[TypeAssigner](TypeAssigner)
   private val (progressCallbackLoc, store11) = store10.newLocation[ProgressCallback | Null]()
+  // CheckUnused.RefInfos. Typed as AnyRef|Null to avoid a layering cycle
+  // (CheckUnused lives in `transform`, Contexts in `core`). The CheckUnused
+  // phase casts on access. Migrated from a `Property.StickyKey[RefInfos]`
+  // (immutable Map.get + Option allocation) to Store (raw array index).
+  val (refInfosLoc,                 store12) = store11.newLocation[AnyRef | Null]()
 
-  private val initialStore = store11
+  private val initialStore = store12
 
   /** The current context */
   inline def ctx(using ctx: Context): Context = ctx

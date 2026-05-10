@@ -46,10 +46,19 @@ class CheckUnused private (phaseMode: PhaseMode, suffix: String) extends MiniPha
 
   override def isRunnable(using Context): Boolean = super.isRunnable && ctx.settings.WunusedHas.any && !ctx.isJava
 
+  // PostPatMat (Report mode) only walks `tree.call` of Inlined nodes; it does not
+  // need the macro-expanded `tree.expansion` subtree, since `resolveUsage`
+  // filters non-user-code idents anyway. Skipping the expansion walk is a
+  // meaningful win on heavily-inlined code.
+  // Aggregate (PostTyper) and Resolve (PostInlining) modes still need the
+  // expansion: PostTyper registers definitions inside it, PostInlining picks
+  // up references introduced by the inliner.
+  override def skipInlinedExpansion: Boolean = phaseMode == PhaseMode.Report
+
   override def prepareForUnit(tree: Tree)(using Context): Context =
     val infos = tree.getAttachment(refInfosKey).getOrElse:
       RefInfos().tap(tree.withAttachment(refInfosKey, _))
-    ctx.fresh.setProperty(refInfosKey, infos)
+    ctx.fresh.updateStore(Contexts.refInfosLoc, infos)
   override def transformUnit(tree: Tree)(using Context): tree.type =
     if phaseMode == PhaseMode.Report then
       reportUnused()
@@ -513,7 +522,10 @@ object CheckUnused:
 
   val refInfosKey = Property.StickyKey[RefInfos]
 
-  inline def refInfos(using Context): RefInfos = ctx.property(refInfosKey).get
+  // Note: stored via Contexts.refInfosLoc (Store-based, faster than property map).
+  // The attachment-on-tree key above is still used for cross-phase persistence.
+  inline def refInfos(using ctx: Context): RefInfos =
+    ctx.store(Contexts.refInfosLoc).asInstanceOf[RefInfos]
 
   /** Attachment holding the name of an Ident as written by the user. */
   val OriginalName = Property.StickyKey[Name]

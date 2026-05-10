@@ -278,11 +278,14 @@ object Substituters:
   /** Convert a `List[Symbol]` to an `Array[Symbol]`. Used at the public
    *  boundary to convert from the user-facing List API to the internal
    *  array-based storage (faster index access and cache locality during
-   *  the main type-traversal loop).
+   *  the main type-traversal loop). Fast paths avoid the `xs.length`
+   *  pre-walk for the very common n=0/1/2 cases.
    */
-  def listToSymArray(xs: List[Symbol]): Array[Symbol] =
-    if xs.isEmpty then emptySymArray
-    else
+  def listToSymArray(xs: List[Symbol]): Array[Symbol] = xs match
+    case Nil => emptySymArray
+    case h :: Nil => Array(h)
+    case h1 :: (rest @ (h2 :: Nil)) => Array(h1, h2)
+    case _ =>
       val n = xs.length
       val arr = new Array[Symbol](n)
       var i = 0
@@ -291,9 +294,11 @@ object Substituters:
       arr
 
   /** Convert a `List[Type]` to an `Array[Type]`. */
-  def listToTypeArray(xs: List[Type]): Array[Type] =
-    if xs.isEmpty then emptyTypeArray
-    else
+  def listToTypeArray(xs: List[Type]): Array[Type] = xs match
+    case Nil => emptyTypeArray
+    case h :: Nil => Array(h)
+    case h1 :: (rest @ (h2 :: Nil)) => Array(h1, h2)
+    case _ =>
       val n = xs.length
       val arr = new Array[Type](n)
       var i = 0
@@ -301,6 +306,6 @@ object Substituters:
       while (i < n) { arr(i) = cur.head; cur = cur.tail; i += 1 }
       arr
 
-  private val emptySymArray: Array[Symbol] = new Array[Symbol](0)
-  private val emptyTypeArray: Array[Type] = new Array[Type](0)
+  val emptySymArray: Array[Symbol] = new Array[Symbol](0)
+  val emptyTypeArray: Array[Type] = new Array[Type](0)
 end Substituters

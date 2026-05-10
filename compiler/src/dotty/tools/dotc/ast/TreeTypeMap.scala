@@ -50,6 +50,13 @@ class TreeTypeMap(
       substTo: List[Symbol])(using Context): TreeTypeMap =
     new TreeTypeMap(typeMap, treeMap, oldOwners, newOwners, substFrom, substTo)
 
+  // Cache the List→Array conversion of the substitution pair so that
+  // mapType doesn't redo it for every NamedType visited.
+  private val substFromArr: Array[Symbol] =
+    if substFrom.isEmpty then Substituters.emptySymArray else Substituters.listToSymArray(substFrom)
+  private val substToArr: Array[Symbol] =
+    if substFrom.isEmpty then Substituters.emptySymArray else Substituters.listToSymArray(substTo)
+
   /** If `sym` is one of `oldOwners`, replace by corresponding symbol in `newOwners` */
   def mapOwner(sym: Symbol): Symbol = sym.subst(oldOwners, newOwners)
 
@@ -78,10 +85,12 @@ class TreeTypeMap(
     val substituted =
       if substFrom.isEmpty then mappedTp
       else
+        val fromArr = substFromArr
+        val toArr = substToArr
         val substMap = new TypeMap():
           def apply(tp: Type): Type = tp match
             case tp: TermRef if tp.symbol.isImport => mapOver(tp)
-            case tp => tp.substSym(substFrom, substTo)
+            case tp => tp.substSym(fromArr, toArr)
         substMap(mappedTp)
     // Fast path: when there are no owner remappings, mapOwnerThis is the
     // identity. Skip allocating the TypeMap walk in that case.

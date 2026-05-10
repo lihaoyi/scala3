@@ -2012,6 +2012,15 @@ object Types extends TypeUtils {
       if from.isEmpty then this
       else Substituters.substSym(this, Substituters.listToSymArray(from), Substituters.listToSymArray(to), null)
 
+    /** Same as `substSym(List, List)` but takes already-converted arrays.
+     *  Used by callers (e.g. TreeTypeMap) that perform many substitutions
+     *  with the same `from`/`to` pair, to avoid re-converting List→Array
+     *  at every NamedType visited.
+     */
+    final def substSym(from: Array[Symbol], to: Array[Symbol])(using Context): Type =
+      if from.length == 0 then this
+      else Substituters.substSym(this, from, to, null)
+
     /** Substitute all occurrences of symbols in `from` by corresponding types in `to`.
      *  Unlike for `subst`, the `to` types can be type bounds. A TypeBounds target
      *  will be replaced by range that gets absorbed in an approximating type map.

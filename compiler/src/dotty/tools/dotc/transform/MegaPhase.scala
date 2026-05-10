@@ -69,6 +69,14 @@ object MegaPhase {
     def prepareForTry(tree: Try)(using Context): Context = ctx
     def prepareForSeqLiteral(tree: SeqLiteral)(using Context): Context = ctx
     def prepareForInlined(tree: Inlined)(using Context): Context = ctx
+    /** If true, the MegaPhase dispatcher won't recurse into `tree.expansion`
+     *  for `Inlined` nodes. The MiniPhase still receives the `Inlined` via
+     *  `transformInlined` (so it can inspect `tree.call`), but the typically
+     *  large macro-expanded subtree is not walked. Read-only phases that only
+     *  care about user-written code can opt in. The MegaPhase only honors
+     *  this when ALL its MiniPhases agree.
+     */
+    def skipInlinedExpansion: Boolean = false
     def prepareForQuote(tree: Quote)(using Context): Context = ctx
     def prepareForSplice(tree: Splice)(using Context): Context = ctx
     def prepareForTypeTree(tree: TypeTree)(using Context): Context = ctx
@@ -408,7 +416,9 @@ class MegaPhase(val miniPhases: Array[MiniPhase]) extends Phase {
       case tree: Inlined =>
         inContext(prepInlined(tree, start)(using outerCtx)) {
           val bindings = transformSpecificTrees(tree.bindings, start)
-          val expansion = transformTree(tree.expansion, start)(using inlineContext(tree))
+          val expansion =
+            if skipAllInlinedExpansion then tree.expansion
+            else transformTree(tree.expansion, start)(using inlineContext(tree))
           goInlined(cpy.Inlined(tree)(tree.call, bindings, expansion), start)
         }
       case tree: Quote =>
@@ -573,6 +583,10 @@ class MegaPhase(val miniPhases: Array[MiniPhase]) extends Phase {
   private val nxSeqLiteralTransPhase = init("transformSeqLiteral")
   private val nxInlinedPrepPhase = init("prepareForInlined")
   private val nxInlinedTransPhase = init("transformInlined")
+  /** If every MiniPhase in this batch opts out of walking inlined expansions,
+   *  the dispatcher can skip recursing into `tree.expansion`. */
+  private val skipAllInlinedExpansion: Boolean =
+    miniPhases.nonEmpty && miniPhases.forall(_.skipInlinedExpansion)
   private val nxQuotePrepPhase = init("prepareForQuote")
   private val nxQuoteTransPhase = init("transformQuote")
   private val nxSplicePrepPhase = init("prepareForPrep")
