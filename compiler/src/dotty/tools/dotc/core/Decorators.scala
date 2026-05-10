@@ -203,11 +203,17 @@ object Decorators {
     }
 
     @tailrec final def eqElements(ys: List[AnyRef]): Boolean = xs match {
-      case x :: _ =>
+      case x :: xsTail =>
         ys match {
-          case y :: _ =>
-            x.asInstanceOf[AnyRef].eq(y) &&
-            xs.tail.eqElements(ys.tail)
+          case y :: ysTail =>
+            // Most type-argument / param-name lists are 1 element.
+            // Combining the head-eq check with an early-out for the
+            // common 1-element case avoids an extra recursive call
+            // and the allocation-free `Nil` pattern match.
+            (x.asInstanceOf[AnyRef] eq y) && {
+              if xsTail.isEmpty then ysTail.isEmpty
+              else xsTail.eqElements(ysTail)
+            }
           case _ => false
         }
       case nil => ys.isEmpty

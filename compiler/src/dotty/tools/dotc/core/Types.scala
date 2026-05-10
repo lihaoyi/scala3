@@ -2006,7 +2006,11 @@ object Types extends TypeUtils {
     /** Substitute all occurrences of symbols in `from` by references to corresponding symbols in `to`
      */
     final def substSym(from: List[Symbol], to: List[Symbol])(using Context): Type =
-      Substituters.substSym(this, from, to, null)
+      // Fast path: most calls (especially via TreeTypeMap with no captured symbols)
+      // pass empty `from`/`to`, where the substitution is a no-op but still walks
+      // the entire type via SubstSymMap. Avoid the traversal entirely.
+      if from.isEmpty then this
+      else Substituters.substSym(this, from, to, null)
 
     /** Substitute all occurrences of symbols in `from` by corresponding types in `to`.
      *  Unlike for `subst`, the `to` types can be type bounds. A TypeBounds target

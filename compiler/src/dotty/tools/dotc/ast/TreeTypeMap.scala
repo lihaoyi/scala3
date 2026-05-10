@@ -69,11 +69,19 @@ class TreeTypeMap(
   }
 
   def mapType(tp: Type): Type =
-    val substMap = new TypeMap():
-      def apply(tp: Type): Type = tp match
-        case tp: TermRef if tp.symbol.isImport => mapOver(tp)
-        case tp => tp.substSym(substFrom, substTo)
-    mapOwnerThis(substMap(typeMap(tp)))
+    // Fast path: when there are no symbols to substitute, skip building a
+    // SubstSymMap and walking the type for it. The owner-this remap and the
+    // user-supplied typeMap still apply.
+    val mappedTp = typeMap(tp)
+    val substituted =
+      if substFrom.isEmpty then mappedTp
+      else
+        val substMap = new TypeMap():
+          def apply(tp: Type): Type = tp match
+            case tp: TermRef if tp.symbol.isImport => mapOver(tp)
+            case tp => tp.substSym(substFrom, substTo)
+        substMap(mappedTp)
+    mapOwnerThis(substituted)
   end mapType
 
   private def updateDecls(prevStats: List[Tree], newStats: List[Tree]): Unit =
