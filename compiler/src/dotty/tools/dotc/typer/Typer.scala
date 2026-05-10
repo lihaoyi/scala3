@@ -3108,11 +3108,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
     sym.owner.info.decls.openForMutations.unlink(sym)
     EmptyTree
 
-  def typedDefDef(ddef: untpd.DefDef, sym: Symbol)(using Context): Tree = if !sym.info.exists then retractDefDef(sym) else ctx.profiler.onTypedDef(sym) {
-    val DefDef(name, paramss, tpt, _) = ddef
-    checkNonRootName(ddef.name, ddef.nameSpan)
-    completeAnnotations(ddef, sym)
-    val paramss1 = paramss.nestedMapConserve(typed(_)).asInstanceOf[List[ParamClause]]
+  private def checkParamNamesDistinct(paramss1: List[ParamClause], sym: Symbol)(using Context): Unit =
     for case ValDefs(vparams) <- paramss1 do
       if !ctx.isAfterTyper && !sym.is(Synthetic) then
         vparams.foldLeft(mutable.Set.empty[Name]): (seen, p) =>
@@ -3125,9 +3121,8 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
             seen.addOne(nm)
           seen.addOne(p.name)
       checkNoForwardDependencies(vparams)
-    if (sym.isOneOf(GivenOrImplicit)) checkImplicitConversionDefOK(sym)
-    val tpt1 = checkSimpleKinded(typedType(tpt))
 
+  private def freshRhsContext(sym: Symbol, paramss1: List[ParamClause])(using Context): Context =
     val rhsCtx = ctx.fresh
     val tparamss = paramss1.collect {
       case untpd.TypeDefs(tparams) => tparams
@@ -3154,6 +3149,55 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
 
     if sym.isInlineMethod then rhsCtx.addMode(Mode.InlineableBody)
     if sym.is(ExtensionMethod) then rhsCtx.addMode(Mode.InExtensionMethod)
+    rhsCtx
+
+  private def checkConstructorDef(ddef: untpd.DefDef, sym: Symbol, paramss1: List[ParamClause], rhs1: Tree)(using Context): Unit =
+    if sym.is(Inline) then
+      report.error("constructors cannot be `inline`", ddef)
+
+    if sym.targetName != sym.name then
+      report.error(em"@targetName annotation may not be used on a constructor", ddef.srcPos)
+
+    if sym.isPrimaryConstructor then
+      if sym.owner.is(Case) then
+        for
+          params <- paramss1.dropWhile(TypeDefs.unapply(_).isDefined).take(1)
+          case param: ValDef <- params
+        do
+          if defn.isContextFunctionType(param.tpt.tpe) then
+            report.error("case class element cannot be a context function", param.srcPos)
+    else
+      for params <- paramss1; param <- params do
+        checkRefsLegal(param, sym.owner, (name, sym) => sym.is(TypeParam), "secondary constructor")
+
+      def checkThisConstrCall(tree: Tree): Unit = tree match
+        case app: Apply if untpd.isSelfConstrCall(app) =>
+          if !sym.is(Synthetic)
+            && sym.span.exists
+            && app.symbol.span.exists
+            && sym.span.start <= app.symbol.span.start
+            && tree.span.exists && !tree.span.isSynthetic
+          then
+            report.error("secondary constructor must call a preceding constructor", app.srcPos)
+        case Block(call :: _, expr) =>
+          checkThisConstrCall(call)
+          checkThisConstrCall(expr)
+        case _ =>
+
+      checkThisConstrCall(rhs1)
+    end if
+
+  def typedDefDef(ddef: untpd.DefDef, sym: Symbol)(using Context): Tree = if !sym.info.exists then retractDefDef(sym) else ctx.profiler.onTypedDef(sym) {
+    val DefDef(name, paramss, tpt, _) = ddef
+    checkNonRootName(ddef.name, ddef.nameSpan)
+    completeAnnotations(ddef, sym)
+    val paramss1 = paramss.nestedMapConserve(typed(_)).asInstanceOf[List[ParamClause]]
+    checkParamNamesDistinct(paramss1, sym)
+    if (sym.isOneOf(GivenOrImplicit)) checkImplicitConversionDefOK(sym)
+    val tpt1 = checkSimpleKinded(typedType(tpt))
+
+    val rhsCtx = freshRhsContext(sym, paramss1)
+
     val rhs1 = excludeDeferredGiven(ddef.rhs, sym): rhs =>
       PrepareInlineable.dropInlineIfError(sym,
         if sym.isScala2Macro then typedScala2MacroBody(rhs)(using rhsCtx)
@@ -3173,41 +3217,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
       PrepareInlineable.registerInlineInfo(sym, rhsToInline)
 
     if sym.isConstructor then
-      if sym.is(Inline) then
-        report.error("constructors cannot be `inline`", ddef)
-
-      if sym.targetName != sym.name then
-        report.error(em"@targetName annotation may not be used on a constructor", ddef.srcPos)
-
-      if sym.isPrimaryConstructor then
-        if sym.owner.is(Case) then
-          for
-            params <- paramss1.dropWhile(TypeDefs.unapply(_).isDefined).take(1)
-            case param: ValDef <- params
-          do
-            if defn.isContextFunctionType(param.tpt.tpe) then
-              report.error("case class element cannot be a context function", param.srcPos)
-      else
-        for params <- paramss1; param <- params do
-          checkRefsLegal(param, sym.owner, (name, sym) => sym.is(TypeParam), "secondary constructor")
-
-        def checkThisConstrCall(tree: Tree): Unit = tree match
-          case app: Apply if untpd.isSelfConstrCall(app) =>
-            if !sym.is(Synthetic)
-              && sym.span.exists
-              && app.symbol.span.exists
-              && sym.span.start <= app.symbol.span.start
-              && tree.span.exists && !tree.span.isSynthetic
-            then
-              report.error("secondary constructor must call a preceding constructor", app.srcPos)
-          case Block(call :: _, expr) =>
-            checkThisConstrCall(call)
-            checkThisConstrCall(expr)
-          case _ =>
-
-        checkThisConstrCall(rhs1)
-      end if
-    end if
+      checkConstructorDef(ddef, sym, paramss1, rhs1)
 
     if sym.is(Method) && sym.owner.denot.isRefinementClass then
       for annot <- sym.paramSymss.flatten.filter(_.isTerm).flatMap(_.getAnnotation(defn.ImplicitNotFoundAnnot)) do
