@@ -206,6 +206,7 @@ object Decorators {
       // Hand-rolled while loop: avoids the `::`/`Nil` pattern matches and
       // tail-recursive call site. This method is hot (called from Type
       // hash-cons / argument equality) so the few-instruction win matters.
+      if (xs.asInstanceOf[AnyRef] eq ys) return true
       var a: List[T] = xs
       var b: List[AnyRef] = ys
       while (a ne Nil) {
