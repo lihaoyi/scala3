@@ -8,13 +8,14 @@ Please profile the compiler, run benchmarks, and optimize the hot-spots to impro
    whether bottlenecks at the bottom of the call stack, algorithmically inefficient code further
    up the callsite, or data structures that could be improved.
 
-2. Spawn extra-high-effort sub-agents to analyze the JFR profiles and try to find 
+2. Spawn five extra-high-effort sub-agents to analyze the JFR profiles and try to find 
    opportunities for optimization. Based on JFR and -Vprofile and -Ystats, 
    come up with *high-level algorithm, data structure, or architectural improvements*
    that would substantially improve the performance of the compiler, rather than minor micro-optimizations
    or nitpicks. For each agent that reports optimization opportunities, spawn a second agent to
    deeply investigate the proposed optimizations and how they fit into the relevant parts of the
-   codebase and performance profiles to verify if they are legitimate.
+   codebase and performance profiles to verify if they are legitimate and satisfy the requirements 
+   above.
 
 3. Pick the issues that are most likely to substantially improve the performance of the `~/Github/mill`
    compilation given your profile analysis - potentially more than one - and implement them.
