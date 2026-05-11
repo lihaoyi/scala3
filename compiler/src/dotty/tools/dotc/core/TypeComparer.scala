@@ -55,7 +55,16 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     errorNotes = Nil
     undoLog.clear()
     frozenConstraint = false
+    val defs = c.definitions
+    myAnyType = defs.AnyType
+    myAnyKindType = defs.AnyKindType
     if Config.checkTypeComparerReset then checkReset()
+
+  // Cached at init for the hot trivial-subtype fast paths in `recur`.
+  // Each `comparerContext` switch re-resolves these via the Definitions,
+  // so cross-Context staleness isn't possible.
+  private var myAnyType: TypeRef = compiletime.uninitialized
+  private var myAnyKindType: TypeRef = compiletime.uninitialized
 
   private var pendingSubTypes: util.MutableSet[(Type, Type)] | Null = null
   private var recCount = 0
@@ -1619,6 +1628,15 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     // begin recur
     if tp2 eq NoType then false
     else if tp1 eq tp2 then true
+    // Hot-path trivial-supertype short-circuits. These match the answers
+    // produced by `thirdTryNamed`'s `case _ =>` branch (line ~604), but reach
+    // them before any state-save / firstTry dispatch.
+    //  - `tp1 <:< AnyKind` is unconditionally true (AnyKindClass is the
+    //    universal top across all kinds).
+    //  - `tp1 <:< Any` is true unless tp1 is a higher-kinded type, in which
+    //    case the existing code returns false at `tp1.isLambdaSub` (line ~610).
+    else if tp2 eq myAnyKindType then true
+    else if (tp2 eq myAnyType) && !tp1.isLambdaSub then true
     else
       val savedCstr = constraint
       val savedGadt = ctx.gadt
