@@ -461,12 +461,22 @@ object Trees {
     extends RefTree[T] {
     type ThisTree[+T <: Untyped] = Select[T]
 
+    // iter46 D-#1: inline the DenotingTree.denot common path so JIT keeps Select.denot
+    // within its inline budget. ConstantType + stripped fallbacks live in denotSlowPath.
     override def denot(using Context): Denotation = typeOpt match
+      case tpe: NamedType => tpe.denot
+      case tpe: ThisType => tpe.cls.denot
+      case NoType => NoDenotation
+      case _ => denotSlowPath
+
+    private def denotSlowPath(using Context): Denotation = typeOpt match
       case ConstantType(_) if ConstFold.foldedUnops.contains(name) =>
         // Recover the denotation of a constant-folded selection
         qualifier.typeOpt.member(name).atSignature(Signature.NotAMethod, name)
-      case _ =>
-        super.denot
+      case tpe => tpe.stripped match
+        case tpe: NamedType => tpe.denot
+        case tpe: ThisType => tpe.cls.denot
+        case _ => NoDenotation
 
     def nameSpan(using Context): Span =
       if span.exists then
