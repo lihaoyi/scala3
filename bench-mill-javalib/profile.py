@@ -50,6 +50,12 @@ def main():
     java_opts = ["-Xms2g", "-Xmx4g"]
     if args.use_jfr:
         args.jfr_out.unlink(missing_ok=True)
+        # `stackdepth=1024`: JFR's default 64-frame cap truncates Scala
+        # compilation stacks (recursive Typer + InlineTyper routinely
+        # blow past 80 frames), which makes the analyzer's top-down tree
+        # show many disjoint mid-stack "roots". 1024 is overkill but
+        # cheap enough that we leave headroom.
+        java_opts.append("-XX:FlightRecorderOptions=stackdepth=1024")
         java_opts.append(
             f"-XX:StartFlightRecording=filename={args.jfr_out},settings=profile,"
             f"jdk.ExecutionSample#period=1ms,dumponexit=true"

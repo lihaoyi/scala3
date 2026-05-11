@@ -42,11 +42,26 @@ Generated state (gitignored) lives under `target/bench-mill-javalib/`:
 3. **Top-down call tree** — every node shows `tot%` (samples passing
    through) and `self%` (samples ending here). Nodes below
    `--tree-threshold` (% of total samples) or beyond `--tree-depth` are
-   pruned.
+   pruned. Frames are tagged with their source-file line number
+   (`method:line`) by default; disable with `--no-with-lines`.
 4. **Bottom-up reverse forest** — for each of the top
    `--reverse-top` self-timed methods, a tree of callers walking
-   outward. `--reverse-threshold` is interpreted as % of the leaf
-   method's own samples, so each sub-forest is independently scannable.
+   outward. Columns:
+   - `tot%` = % of all samples whose stack reaches the leaf via this
+     caller chain (same denominator as top-down's `tot%`).
+   - `leaf%` = % of the leaf method's own self samples that came in
+     through this caller path.
+
+   `--reverse-threshold` is interpreted as % of the leaf method's own
+   samples (node-local), so each sub-forest is independently scannable.
 
 Use `--no-tree` / `--no-reverse` to suppress either tree if only the
 flat tables are wanted.
+
+**Stack depth.** `profile.py` records JFR with
+`-XX:FlightRecorderOptions=stackdepth=1024` because the Scala compiler
+routinely produces stacks deeper than JFR's default 64-frame cap
+(recursive `Typer` + `InlineTyper`). Without this, the top-down tree
+breaks into many disjoint mid-stack "roots" because outer frames are
+truncated at recording time. `analyze-jfr.py` likewise reads with
+`--stack-depth 1024`.

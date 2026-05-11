@@ -48,19 +48,18 @@ class Node:
         self.children: dict[str, Node] = {}
 
 
-def build_top_down(stacks: list[list[str]]) -> Node:
-    """Top-down tree: root → outermost frame → ... → innermost.
-
+def build_top_down(stacks: list[tuple[list[str], list[str]]]) -> Node:
+    """Top-down tree built from `tree_frames` (line-tagged when enabled).
     `total` counts stacks passing through; `self_count` counts stacks whose
     innermost frame IS this node.
     """
     root = Node("<root>")
-    for frames in stacks:
-        if not frames:
+    for _, tree_frames in stacks:
+        if not tree_frames:
             continue
         cur = root
         cur.total += 1
-        for f in reversed(frames):
+        for f in reversed(tree_frames):
             child = cur.children.get(f)
             if child is None:
                 child = Node(f)
@@ -71,22 +70,23 @@ def build_top_down(stacks: list[list[str]]) -> Node:
     return root
 
 
-def build_bottom_up(stacks: list[list[str]], target: str) -> Node:
-    """Bottom-up tree rooted at `target`. Children are immediate callers
-    (the next-outermost frame), then their callers, etc.
+def build_bottom_up(stacks: list[tuple[list[str], list[str]]], target: str) -> Node:
+    """Bottom-up tree rooted at the bare method `target`. Children are
+    immediate callers walking outward, tagged with their call-site lines
+    when `--with-lines` is on.
 
-    `total` on root = number of stacks where target is the innermost frame.
-    On a caller-node, `total` = number of those stacks routed through this
-    caller chain.
+    The root key matches against bare method names (so all source lines of
+    the leaf method aggregate into one root). Caller frames use the
+    line-tagged form to split branches per call site.
     """
     root = Node(target)
-    for frames in stacks:
-        if not frames or frames[0] != target:
+    for methods, tree_frames in stacks:
+        if not methods or methods[0] != target:
             continue
         cur = root
         cur.total += 1
         cur.self_count += 1
-        for f in frames[1:]:
+        for f in tree_frames[1:]:
             child = cur.children.get(f)
             if child is None:
                 child = Node(f)
@@ -123,19 +123,27 @@ def print_top_down(root: Node, kept: int, threshold_pct: float, max_depth: int) 
     walk(root, 0)
 
 
-def print_bottom_up(stacks: list[list[str]], own: collections.Counter[str],
+def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
+                    own: collections.Counter[str],
                     kept: int, top_n: int, threshold_pct: float, max_depth: int) -> None:
     """For each of top-N self-timed methods, print a reverse caller tree.
 
+    Columns:
+      tot%  = % of all samples whose stack reaches the leaf via this
+              caller chain (inclusive — same denominator as top-down's
+              `tot%`).
+      leaf% = % of the leaf method's OWN self samples that flowed
+              through this caller path.
+
     `threshold_pct` is interpreted as "% of the leaf method's samples"
     (a node-local threshold), not % of total samples. This keeps each
-    sub-forest scannable independently.
+    sub-forest independently scannable.
     """
     if kept == 0 or top_n <= 0:
         return
     print(f"\n=== Bottom-up reverse forest (top {top_n} self methods, "
           f"caller threshold >= {threshold_pct:.2f}% of leaf samples) ===")
-    print(f"  {'self%':>6} {'leaf%':>6}  caller tree")
+    print(f"  {'tot%':>6} {'leaf%':>6}  caller tree")
 
     for method, leaf_count in own.most_common(top_n):
         root = build_bottom_up(stacks, method)
@@ -150,10 +158,10 @@ def print_bottom_up(stacks: list[list[str]], own: collections.Counter[str],
             for kid in kids:
                 if kid.total < threshold:
                     continue
-                slf = 100 * kid.total / kept                # % of all samples
+                tot = 100 * kid.total / kept                 # % of all samples
                 leaf = 100 * kid.total / leaf_count          # % of leaf's samples
                 indent = "  " * depth
-                print(f"  {slf:6.2f} {leaf:6.2f}  {indent}^ {kid.name}")
+                print(f"  {tot:6.2f} {leaf:6.2f}  {indent}^ {kid.name}")
                 walk(kid, depth + 1)
         walk(root, 0)
 
@@ -177,14 +185,20 @@ def main():
                     help="Top-down tree: max depth (default 40).")
     ap.add_argument("--reverse", action=argparse.BooleanOptionalAction, default=True,
                     help="Print bottom-up reverse forest (default on).")
-    ap.add_argument("--reverse-top", type=int, default=10,
+    ap.add_argument("--reverse-top", type=int, default=20,
                     help="Bottom-up forest: include reverse tree for the "
-                         "top-N self-time methods (default 10).")
+                         "top-N self-time methods (default 20).")
     ap.add_argument("--reverse-threshold", type=float, default=10.0,
                     help="Bottom-up forest: min %% of the leaf method's "
                          "samples to keep a caller node (default 10.0).")
     ap.add_argument("--reverse-depth", type=int, default=20,
                     help="Bottom-up forest: max depth (default 20).")
+    ap.add_argument("--with-lines", action=argparse.BooleanOptionalAction, default=True,
+                    help="Append JFR-reported line numbers to method names "
+                         "in the tree views (default on). Aggregates "
+                         "recursive calls per source line for clearer "
+                         "branch attribution. Flat tables always use bare "
+                         "method names.")
     args = ap.parse_args()
     if not args.jfr.is_file():
         sys.exit(f"JFR file not found: {args.jfr}")
@@ -194,7 +208,7 @@ def main():
         subprocess.run(
             [find_jfr_bin(), "print",
              "--events", "jdk.ExecutionSample",
-             "--stack-depth", "64", str(args.jfr)],
+             "--stack-depth", "1024", str(args.jfr)],
             stdout=tmp, check=True,
         )
         tmp_path = Path(tmp.name)
@@ -221,8 +235,15 @@ def main():
 
     own: collections.Counter[str] = collections.Counter()
     total: collections.Counter[str] = collections.Counter()
-    stacks: list[list[str]] = []
+    # Two parallel forms per sample: `methods` is bare method names (used by
+    # the flat tables and the bottom-up roots so leaves aggregate regardless
+    # of call-site line). `tree_frames` includes `:line` when `--with-lines`
+    # is on, so tree nodes split per source line — this disambiguates
+    # recursive callers (e.g. `Type.dealias:1547` vs `Type.dealias:1559`).
+    stacks: list[tuple[list[str], list[str]]] = []
     kept = dropped_thread = dropped_warmup = 0
+
+    line_re = re.compile(r"\s+line:\s*(\d+)\s*$")
 
     for ev in events:
         m_thr = re.search(r'sampledThread\s*=\s*"([^"]+)"', ev)
@@ -238,7 +259,8 @@ def main():
         m_st = re.search(r"stackTrace\s*=\s*\[(.*?)\]\s*\}", ev, re.S)
         if not m_st:
             continue
-        frames: list[str] = []
+        methods: list[str] = []
+        tree_frames: list[str] = []
         for line in m_st.group(1).splitlines():
             s = line.strip()
             if not s:
@@ -251,18 +273,24 @@ def main():
                 continue
             if args.filter and args.filter not in method:
                 continue
-            frames.append(intern(method))
-        if not frames:
+            methods.append(intern(method))
+            if args.with_lines:
+                m_line = line_re.search(s)
+                tag = f"{method}:{m_line.group(1)}" if m_line else method
+                tree_frames.append(intern(tag))
+            else:
+                tree_frames.append(intern(method))
+        if not methods:
             continue
         kept += 1
-        own[frames[0]] += 1
+        own[methods[0]] += 1
         seen: set[str] = set()
-        for f in frames:
+        for f in methods:
             if f in seen:
                 continue
             seen.add(f)
             total[f] += 1
-        stacks.append(frames)
+        stacks.append((methods, tree_frames))
 
     print("\n=== JFR analysis ===")
     print(f"Total samples kept: {kept}")
