@@ -84,7 +84,7 @@ object Uniques:
     override def hash(x: AppliedType): Int = x.hash
 
     def enterIfNew(tycon: Type, args: List[Type]): AppliedType =
-      val h = doHash(null, tycon, args)
+      val h = doHashNoBinders(tycon, args)
       def newType = new CachedAppliedType(tycon, args, h)
       if monitored then recordCaching(h, classOf[CachedAppliedType])
       if h == NotCached then newType
