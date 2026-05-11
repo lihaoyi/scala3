@@ -1,6 +1,7 @@
 Please repeatedly spawn a sub-agent with the following prompt. Do not do the heavy lifting yourself
 but leave it to the subagent. Your job is to monitor the sub-agent: prompt it to continue if it
-stops prematurely, adjust its prompt if it needs guidance.
+stops prematurely, adjust its prompt if it needs guidance. Continue iterating with subagents
+and do not stop until I interrupt you explicitly
 
 ---
 
