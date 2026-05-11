@@ -62,6 +62,41 @@ Helper scripts for benchmarking the local Scala 3 compiler against
     containing STR (e.g. `--filter Inliner`, `--filter TypeComparer`).
   - `--top N`, `--all-threads`, `--no-jdk` (default on).
 
+- **`analyze-jmh.py`** — Robust post-processing for JMH JSON output. Reads
+  one or two JMH result JSONs (baseline and optionally post-change) and
+  reports mean, median, 10%-trimmed mean, 20%-trimmed mean, plus the
+  bootstrap 95% CI on each estimator. Decomposes between-fork vs
+  within-fork variance and flags a warmup-tail outlier if the first
+  measurement iteration of each fork looks anomalous, then re-runs the
+  statistics with the first iteration of each fork dropped. When two
+  files are supplied, also prints the bootstrap CI on the delta for each
+  estimator plus a one-line VERDICT (SHIP / REVERT / MIXED / NULL) that
+  requires >=3 of the 4 estimators to agree in direction + significance.
+  Use this in preference to JMH's vanilla mean+CI when the effect size
+  is below ~2% — JMH's 99.9% t-multiplier is too wide and the warmup
+  tail inflates SD by ~30-40 ms on this corpus.
+
+  **SD-ratio sanity guard (iter 20):** before printing the verdict, the
+  script computes `post.sd / baseline.sd` and requires it to be within
+  `[0.6, 1.7]`. If it falls outside that window the verdict is forcibly
+  downgraded to `INCONCLUSIVE (SD-ratio guard tripped)` regardless of
+  estimator significance. The motivating case was iter 19, where the
+  baseline run had SD 264 ms and the post run had SD 145 ms (ratio
+  0.55); the two-sample bootstrap reported a -14.3% SIG SPEEDUP, but
+  the true effect of the change (a free-predicate short-circuit gating
+  a 99.14% no-op) is expected to be ~1-2%. The guard reclassifies that
+  pair as INCONCLUSIVE so the loop re-benches instead of shipping a
+  noise-inflated win. The 0.6/1.7 thresholds correspond to roughly a
+  3x ratio of variances, which is the level at which the bootstrap CI
+  starts to be visibly distorted in this corpus.
+
+  Example:
+  ```
+  python3 agent-scripts/analyze-jmh.py \
+    bench-mill-javalib/build/jmh-iter14-baseline.json \
+    bench-mill-javalib/build/jmh-iter14-postchange.json
+  ```
+
 ## Outputs
 
 `bench-mill-javalib/inputs/`
