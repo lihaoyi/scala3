@@ -1,6 +1,9 @@
 Run the following prompt in a sub-agent. Repeat until I interrupt you. Review the results
 from each iteration's sub-agent and adjust it as necessary to unblock or guide future iterations.
 
+---
+
+
 Please profile the compiler, run benchmarks, and optimize the hot-spots to improve its performance.
 
 1. Review the `git log -p main..head` to see any recent changes. Run a compile
