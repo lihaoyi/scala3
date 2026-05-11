@@ -58,6 +58,15 @@ object SymDenotations {
     private var myAnnotations: List[Annotation] = Nil
     private var myParamss: List[List[Symbol]] = Nil
 
+    // Memoization for `isStaticOwner` (1.3% self in the warm Mill javalib
+    // compile per JFR; recursive walk up the owner chain). 0 = unknown,
+    // 1 = true, -1 = false. Invalidated by `flags_=`/`setFlag`/`resetFlag`
+    // — the only paths that can mutate `myFlags`. The owner field
+    // (`maybeOwner`) is `final val` and `originDenotation` returns the
+    // initial denotation, so the recursive component is immutable per
+    // denotation instance.
+    private var myIsStaticOwnerCached: Byte = 0
+
     /** The owner of the symbol; overridden in NoDenotation */
     def owner: Symbol = maybeOwner
 
@@ -77,12 +86,13 @@ object SymDenotations {
     /** Update the flag set */
     final def flags_=(flags: FlagSet): Unit =
       myFlags = adaptFlags(flags)
+      myIsStaticOwnerCached = 0
 
     /** Set given flags(s) of this denotation */
-    final def setFlag(flags: FlagSet): Unit = { myFlags |= flags }
+    final def setFlag(flags: FlagSet): Unit = { myFlags |= flags; myIsStaticOwnerCached = 0 }
 
     /** Unset given flags(s) of this denotation */
-    final def resetFlag(flags: FlagSet): Unit = { myFlags &~= flags }
+    final def resetFlag(flags: FlagSet): Unit = { myFlags &~= flags; myIsStaticOwnerCached = 0 }
 
     /** Set applicable flags in {NoInits, PureInterface}
      *  @param  parentFlags  The flags that match the class or trait's parents
@@ -756,7 +766,12 @@ object SymDenotations {
 
     /** Is this a package class or module class that defines static symbols? */
     final def isStaticOwner(using Context): Boolean =
-      myFlags.is(ModuleClass) && (myFlags.is(PackageClass) || isStatic)
+      val c = myIsStaticOwnerCached
+      if c != 0 then c > 0
+      else
+        val r = myFlags.is(ModuleClass) && (myFlags.is(PackageClass) || isStatic)
+        myIsStaticOwnerCached = if r then 1 else -1
+        r
 
     /** Is this denotation defined in the same scope and compilation unit as that symbol? */
     final def isCoDefinedWith(other: Symbol)(using Context): Boolean =
