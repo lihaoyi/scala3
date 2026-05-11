@@ -257,10 +257,20 @@ object Trees {
   /** Tree's denotation can be derived from its type */
   abstract class DenotingTree[+T <: Untyped](implicit @constructorOnly src: SourceFile) extends Tree[T] {
     type ThisTree[+T <: Untyped] <: DenotingTree[T]
-    override def denot(using Context): Denotation = typeOpt.stripped match
+    // Common case (NamedType / ThisType / NoType) skips the `stripped` virtual
+    // dispatch — `stripped` is a no-op default on `Type` but overridden on
+    // TypeVar/AnnotatedType/CapturingType, so JIT can't devirtualize it.
+    // Most DenotingTree.typeOpt values are NamedTypes directly; this method
+    // is 1.3% of self-time per JFR, dominated by call volume (every
+    // `tree.symbol` goes through `denot.symbol`).
+    override def denot(using Context): Denotation = typeOpt match
       case tpe: NamedType => tpe.denot
       case tpe: ThisType => tpe.cls.denot
-      case _ => NoDenotation
+      case NoType => NoDenotation
+      case tpe => tpe.stripped match
+        case tpe: NamedType => tpe.denot
+        case tpe: ThisType => tpe.cls.denot
+        case _ => NoDenotation
   }
 
   /** Tree's denot/isType/isTerm properties come from a subtree
