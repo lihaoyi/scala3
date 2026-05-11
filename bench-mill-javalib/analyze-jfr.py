@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Aggregate `jdk.ExecutionSample` events from a JFR file. Prints:
-  - flat tables of top hot methods by self time and inclusive time
   - top-down call tree rooted at <root>, child = next inward stack frame
   - bottom-up reverse forest rooted at each top-N self-timed method,
     child = next outward stack frame (caller).
@@ -9,6 +8,10 @@ Both trees are pruned by a percent-of-samples threshold so the output
 stays scannable. Use `--tree-threshold` (default 1.0%) and
 `--reverse-threshold` (default 10% of the leaf method's samples) to
 widen or tighten the views.
+
+By default the report is also written to `<jfr-stem>-analyze.txt`
+alongside the JFR file (use `--out PATH` to override or `--no-out` to
+suppress).
 """
 from __future__ import annotations
 import argparse, collections, re, shutil, subprocess, sys, tempfile
@@ -125,7 +128,8 @@ def print_top_down(root: Node, kept: int, threshold_pct: float, max_depth: int) 
 
 def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
                     own: collections.Counter[str],
-                    kept: int, top_n: int, threshold_pct: float, max_depth: int) -> None:
+                    kept: int, top_n: int, parent_pct: float,
+                    leaf_floor_pct: float, max_depth: int) -> None:
     """For each of top-N self-timed methods, print a reverse caller tree.
 
     Columns:
@@ -135,28 +139,42 @@ def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
       leaf% = % of the leaf method's OWN self samples that flowed
               through this caller path.
 
-    `threshold_pct` is interpreted as "% of the leaf method's samples"
-    (a node-local threshold), not % of total samples. This keeps each
-    sub-forest independently scannable.
+    Two thresholds combine to keep chains meaningful without blowing
+    out the file size:
+      `parent_pct` (--reverse-threshold)   keep callers that account for
+                                           >= this % of THEIR PARENT's
+                                           samples. Lets long dominant
+                                           chains extend all the way
+                                           back toward `main`.
+      `leaf_floor_pct` (--reverse-floor)   absolute floor — drop nodes
+                                           contributing < this % of the
+                                           leaf method's samples. Stops
+                                           chains from running into
+                                           1-2-sample noise.
     """
     if kept == 0 or top_n <= 0:
         return
     print(f"\n=== Bottom-up reverse forest (top {top_n} self methods, "
-          f"caller threshold >= {threshold_pct:.2f}% of leaf samples) ===")
+          f"caller >= {parent_pct:.1f}% of parent AND >= {leaf_floor_pct:.1f}% "
+          f"of leaf) ===")
     print(f"  {'tot%':>6} {'leaf%':>6}  caller tree")
 
     for method, leaf_count in own.most_common(top_n):
         root = build_bottom_up(stacks, method)
         leaf_pct = 100 * leaf_count / kept
+        floor = leaf_count * leaf_floor_pct / 100.0
         print(f"\n  --- {method}  [self {leaf_pct:.2f}% of all samples, {leaf_count} samples]")
-        threshold = threshold_pct * leaf_count / 100.0
 
         def walk(node: Node, depth: int) -> None:
             if depth > max_depth:
                 return
+            parent_total = node.total
             kids = sorted(node.children.values(), key=lambda n: -n.total)
             for kid in kids:
-                if kid.total < threshold:
+                # Two filters: dominant-of-parent AND meaningful-vs-leaf.
+                if kid.total * 100.0 < parent_total * parent_pct:
+                    continue
+                if kid.total < floor:
                     continue
                 tot = 100 * kid.total / kept                 # % of all samples
                 leaf = 100 * kid.total / leaf_count          # % of leaf's samples
@@ -166,11 +184,31 @@ def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
         walk(root, 0)
 
 
+class Tee:
+    """Forward writes to multiple streams. Used to keep the human-visible
+    stdout output AND a persisted file in one pass — the analysis takes
+    several seconds and shouldn't have to be re-run just to recover what
+    scrolled past."""
+    def __init__(self, *streams):
+        self._streams = streams
+    def write(self, s):
+        for st in self._streams:
+            st.write(s)
+    def flush(self):
+        for st in self._streams:
+            st.flush()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--jfr", type=Path, default=DEFAULT_JFR)
-    ap.add_argument("--top", type=int, default=100,
-                    help="Flat table row count (default 100).")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="Write a copy of the report to this path. Defaults "
+                         "to `<jfr-stem>-analyze.txt` alongside the JFR. "
+                         "Pass `--out -` (or `--no-out`) to skip the file.")
+    ap.add_argument("--no-out", action="store_true",
+                    help="Suppress the auto-saved report file; print only "
+                         "to stdout.")
     ap.add_argument("--skip-warmup-sec", type=float, default=0.0)
     ap.add_argument("--filter", default="")
     ap.add_argument("--no-jdk", action="store_true")
@@ -188,9 +226,16 @@ def main():
     ap.add_argument("--reverse-top", type=int, default=20,
                     help="Bottom-up forest: include reverse tree for the "
                          "top-N self-time methods (default 20).")
-    ap.add_argument("--reverse-threshold", type=float, default=10.0,
-                    help="Bottom-up forest: min %% of the leaf method's "
-                         "samples to keep a caller node (default 10.0).")
+    ap.add_argument("--reverse-threshold", type=float, default=50.0,
+                    help="Bottom-up forest: min %% of the *parent* node's "
+                         "samples to keep a caller (default 50.0). Long "
+                         "dominant chains (each link >= threshold of its "
+                         "predecessor) stay visible to the root.")
+    ap.add_argument("--reverse-floor", type=float, default=10.0,
+                    help="Bottom-up forest: absolute floor — drop callers "
+                         "contributing less than this %% of the leaf "
+                         "method's own samples (default 10.0). Stops "
+                         "chains from running into 1-2-sample noise.")
     ap.add_argument("--reverse-depth", type=int, default=20,
                     help="Bottom-up forest: max depth (default 20).")
     ap.add_argument("--with-lines", action=argparse.BooleanOptionalAction, default=True,
@@ -203,6 +248,32 @@ def main():
     if not args.jfr.is_file():
         sys.exit(f"JFR file not found: {args.jfr}")
 
+    # Resolve the output file (None → auto, "-" / --no-out → skip).
+    out_path: Path | None
+    if args.no_out or (args.out is not None and str(args.out) == "-"):
+        out_path = None
+    elif args.out is not None:
+        out_path = args.out
+    else:
+        out_path = args.jfr.with_name(args.jfr.stem + "-analyze.txt")
+
+    out_file = None
+    real_stdout = sys.stdout
+    if out_path is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_file = out_path.open("w")
+        sys.stdout = Tee(real_stdout, out_file)
+
+    try:
+        run_analysis(args)
+    finally:
+        if out_file is not None:
+            sys.stdout = real_stdout
+            out_file.close()
+            print(f"[analyze-jfr] report saved to {out_path}")
+
+
+def run_analysis(args):
     print(f"[analyze-jfr] reading {args.jfr} ...")
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
         subprocess.run(
@@ -233,13 +304,13 @@ def main():
             return s
         return v
 
+    # `own` ranks the leaf-method roots used by the bottom-up forest.
     own: collections.Counter[str] = collections.Counter()
-    total: collections.Counter[str] = collections.Counter()
     # Two parallel forms per sample: `methods` is bare method names (used by
-    # the flat tables and the bottom-up roots so leaves aggregate regardless
-    # of call-site line). `tree_frames` includes `:line` when `--with-lines`
-    # is on, so tree nodes split per source line — this disambiguates
-    # recursive callers (e.g. `Type.dealias:1547` vs `Type.dealias:1559`).
+    # bottom-up roots so leaves aggregate regardless of call-site line).
+    # `tree_frames` includes `:line` when `--with-lines` is on, so tree
+    # nodes split per source line — this disambiguates recursive callers
+    # (e.g. `Type.dealias:1547` vs `Type.dealias:1559`).
     stacks: list[tuple[list[str], list[str]]] = []
     kept = dropped_thread = dropped_warmup = 0
 
@@ -284,12 +355,6 @@ def main():
             continue
         kept += 1
         own[methods[0]] += 1
-        seen: set[str] = set()
-        for f in methods:
-            if f in seen:
-                continue
-            seen.add(f)
-            total[f] += 1
         stacks.append((methods, tree_frames))
 
     print("\n=== JFR analysis ===")
@@ -300,21 +365,13 @@ def main():
     if kept == 0:
         return
 
-    def table(title: str, counter: collections.Counter[str]) -> None:
-        print(f"\n{title}")
-        print(f"  {'%':>6} {'count':>7}  method")
-        for method, n in counter.most_common(args.top):
-            print(f"  {100 * n / kept:6.2f} {n:7d}  {method}")
-
-    table("=== Top by SELF time (sample at top of stack) ===", own)
-    table("=== Top by TOTAL/INCLUSIVE time (sample anywhere in stack) ===", total)
-
     if args.tree:
         root = build_top_down(stacks)
         print_top_down(root, kept, args.tree_threshold, args.tree_depth)
     if args.reverse:
         print_bottom_up(stacks, own, kept, args.reverse_top,
-                        args.reverse_threshold, args.reverse_depth)
+                        args.reverse_threshold, args.reverse_floor,
+                        args.reverse_depth)
 
 
 if __name__ == "__main__":

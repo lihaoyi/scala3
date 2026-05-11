@@ -30,33 +30,37 @@ Generated state (gitignored) lives under `target/bench-mill-javalib/`:
 ./run-bench.py [--warmup N ...] # full JMH run, JSON only
 ./profile.py --runs 8 --jfr-out target/bench-mill-javalib/profile.jfr  # JFR profile
 ./analyze-jfr.py --jfr target/bench-mill-javalib/profile.jfr \
-                 --skip-warmup-sec 25 --top 50 \
+                 --skip-warmup-sec 25 \
                  --tree-threshold 1.0 \
-                 --reverse-top 10 --reverse-threshold 10.0
+                 --reverse-top 20 --reverse-threshold 10.0
 ```
 
-`analyze-jfr.py` prints four sections:
-1. **Top by SELF time** — flat table of hot leaf methods.
-2. **Top by TOTAL/INCLUSIVE time** — flat table of methods that appear
-   anywhere in the stack.
-3. **Top-down call tree** — every node shows `tot%` (samples passing
+The report is auto-saved to `<jfr-stem>-analyze.txt` alongside the JFR
+(override with `--out PATH`, suppress with `--no-out`). `analyze-jfr.py`
+prints two sections:
+
+1. **Top-down call tree** — every node shows `tot%` (samples passing
    through) and `self%` (samples ending here). Nodes below
    `--tree-threshold` (% of total samples) or beyond `--tree-depth` are
    pruned. Frames are tagged with their source-file line number
    (`method:line`) by default; disable with `--no-with-lines`.
-4. **Bottom-up reverse forest** — for each of the top
+2. **Bottom-up reverse forest** — for each of the top
    `--reverse-top` self-timed methods, a tree of callers walking
-   outward. Columns:
+   outward. The header line for each leaf shows its self-time count
+   (and `% of all samples`), which subsumes the previous flat
+   "top by self time" table. Columns:
    - `tot%` = % of all samples whose stack reaches the leaf via this
      caller chain (same denominator as top-down's `tot%`).
    - `leaf%` = % of the leaf method's own self samples that came in
      through this caller path.
 
-   `--reverse-threshold` is interpreted as % of the leaf method's own
-   samples (node-local), so each sub-forest is independently scannable.
+   Two filters combine: `--reverse-threshold` keeps callers that are
+   >= X% of their **parent**'s samples (default 30%), letting long
+   dominant chains extend all the way back toward `main`. The
+   `--reverse-floor` (default 3% of leaf samples) is an absolute floor
+   so chains don't run into 1-2-sample noise.
 
-Use `--no-tree` / `--no-reverse` to suppress either tree if only the
-flat tables are wanted.
+Use `--no-tree` / `--no-reverse` to suppress either tree.
 
 **Stack depth.** `profile.py` records JFR with
 `-XX:FlightRecorderOptions=stackdepth=1024` because the Scala compiler
