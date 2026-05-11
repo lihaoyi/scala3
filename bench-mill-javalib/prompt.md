@@ -1,23 +1,19 @@
-Please repeatedly spawn a sub-agent with the following prompt. Do not do the heavy lifting yourself
+Please repeatedly spawn a sub-agents to perform the following instructions. Do not do the heavy lifting yourself
 but leave it to the subagent. Your job is to monitor the sub-agent: prompt it to continue if it
 stops prematurely, adjust its prompt if it needs guidance. Continue iterating with subagents
 and do not stop until I interrupt you explicitly
 
----
-
 Please profile the compiler and optimize the hot-spots to improve its performance.
 
-1. Review the `git log -p main..head compiler` to see any recent changes, especially to 
+
+1. (1 subagent) Review the `git log -p main..head compiler` to see any recent changes, especially to 
    `git log main..head --pretty=oneline | grep reverted` which lists failed attempts that you
    should understand so as not to waste time on the same failure. Run a compile
    instrumenting the JVM both with JFR (1ms sample period) and `-Vprofile` so you can get a
    performance profile you can analyze. If the profile is not clean, do whatever it takes to get a
-   clean profile that clearly illustrates where time is being spent during compilation. Analyze
-   the performance profile and cross-reference it to the scala3 codebase to try and find hotspots:
-   whether bottlenecks at the bottom of the call stack, algorithmically inefficient code further
-   up the callsite, or data structures that could be improved.
+   clean profile that clearly illustrates where time is being spent during compilation.
 
-2. Spawn five extra-high-effort sub-agents to analyze the JFR profiles and try to find 
+2. (5 subagent) Spawn five extra-high-effort sub-agents to analyze the JFR profiles and try to find 
    opportunities for optimization. Based on JFR top-down and bottom-up call tree profiles and
    -Vprofile and -Ystats data, 
    come up with *high-level algorithm, data structure, or architectural improvements*
@@ -27,7 +23,7 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
    codebase and performance profiles to verify if they are legitimate and satisfy the requirements 
    above.
 
-3. Pick the issues that are most likely to substantially improve the performance of the `~/Github/mill`
+3. (1 subagent) Pick the issues that are most likely to substantially improve the performance of the `~/Github/mill`
    compilation given your profile analysis - potentially more than one - and implement them.
    Anything from micro-optimizations to broader cross-cutting changes can be considered.
    Even a fraction of a % improvement can be valuable as they add up over time.
@@ -36,7 +32,7 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
    profiler after making the change and see if the expected drop in the time taken for that
    particular method actually happens
 
-4. Run basic smoke-tests to make sure your change doesn't break anything. If
+4. (1 subagent) Run basic smoke-tests to make sure your change doesn't break anything. If
    anything breaks, have the sub-agent report the breakage. As a smoketest, compile
    the bootstrapped compiler and standard library. If it succeeds, make a `git commit`
    with an explanation for what the most recent `git diff` change is mean to accomplish, or just
@@ -47,7 +43,7 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
    and make an empty commit with your findings. Push the commit to
    https://github.com/scala/scala3/pull/26025 using `git push origin head`
 
-DO NOT PERFORM ANY GIT OPERATIONS OTHER THAN THE ONES LISTED ABOVE
+The number of sub-agents spawned per step important, do not deviate from this explicit instruction
 
 Also please maintain the `bench-mill-javalib/` folder with any useful scripts you need so future 
 iterations can use them conveniently, and place any ephemeral output files or reports in
