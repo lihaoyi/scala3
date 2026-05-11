@@ -24,6 +24,24 @@ Helper scripts for benchmarking the local Scala 3 compiler against
   - `--forks N` &nbsp;&nbsp;&nbsp;&nbsp;Override fork count (default 1).
   - Anything after `--` is forwarded to JMH's CLI.
 
+  **Recommended config (iter 21+):** the single-fork x 30-iter config used
+  through iter 20 produced a `+3.76%` (and under drop-first-2, `+4.57% / +6.60%`
+  SIG REGRESSION verdict) on a *no-op* cross-validation pair — i.e. two bench
+  runs of the same unchanged source. Within-fork JIT-tier transitions
+  dominated the signal; one fork's bootstrap CI was anchored on its own
+  tier-flip timing and could not measure sub-5% effects honestly. The new
+  recommended config is **3 forks x 12 iters x 10s, warmup 5 x 5s** plus
+  `--drop-first 2` in `analyze-jmh.py`. Total wall time per bench run is
+  comparable (~24-30 min); the multi-fork resampling spreads JIT-tier
+  variance across independent JVMs.
+
+  ```
+  agent-scripts/run-bench.sh \
+    --warmup 5 --warmup-time 5 \
+    --iterations 12 --time 10 \
+    --forks 3
+  ```
+
 - **`profile.sh`** — Re-runnable. Compiles the Mill libs.javalib corpus N
   times in a single JVM (default 3) using the local non-bootstrapped
   compiler. By default writes a JFR file with 1ms execution-sample period.
@@ -75,6 +93,14 @@ Helper scripts for benchmarking the local Scala 3 compiler against
   Use this in preference to JMH's vanilla mean+CI when the effect size
   is below ~2% — JMH's 99.9% t-multiplier is too wide and the warmup
   tail inflates SD by ~30-40 ms on this corpus.
+
+  **`--drop-first N` flag (iter 21):** override how many iters of EACH
+  fork the "drop-first" rerun discards (default 1). Iter 20's no-op
+  cross-validation showed that under the 1-fork x 30-iter x 10s config
+  the C1->C2 tier-up still inflates iter 2 by ~200ms above the
+  steady-state mean; for the 3-fork x 12-iter config introduced in
+  iter 21 the first TWO iters are noisy and should both be dropped.
+  Pass `--drop-first 2` (or higher) when analysing multi-fork runs.
 
   **SD-ratio sanity guard (iter 20):** before printing the verdict, the
   script computes `post.sd / baseline.sd` and requires it to be within

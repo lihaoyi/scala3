@@ -21,11 +21,19 @@ just two-sample bootstrap with resampling within each side.
 Usage:
   analyze-jmh.py PATH_TO_BASELINE.json
   analyze-jmh.py PATH_TO_BASELINE.json PATH_TO_POSTCHANGE.json
+  analyze-jmh.py --drop-first N PATH_TO_BASELINE.json [PATH_TO_POSTCHANGE.json]
+
+Flags:
+  --drop-first N   How many iters of EACH fork to drop in the drop-first
+                   rerun (default: 1). Iter 20's no-op cross-val showed
+                   the iter-2 measurement is still on the warmup tail
+                   under 1f x 30i x 10s; for the 3-fork x 12-iter config
+                   recommended from iter 21 onwards, pass --drop-first 2.
 
 Exit code 0 always; this is a reporting script, not a gate.
 """
 from __future__ import annotations
-import json, statistics, sys, random
+import argparse, json, statistics, sys, random
 from pathlib import Path
 
 random.seed(20260511)
@@ -161,7 +169,7 @@ def compare(b_raw, p_raw):
         print(f"  VERDICT: {base_verdict}")
     return results
 
-def process(path, label):
+def process(path, label, drop_n=1):
     d = load(path)
     forks = d['primaryMetric']['rawData']
     raw = [v for f in forks for v in f]
@@ -169,25 +177,32 @@ def process(path, label):
     print(f"  config: forks={d['forks']} iters={d['measurementIterations']} warmup={d['warmupIterations']}x{d['warmupTime']} meas-t={d['measurementTime']}")
     s_all = summarize("all iters", raw)
     fork_analysis(label, forks)
-    # Drop-first rerun
-    raw_df = [v for f in forks for v in f[1:]]
+    # Drop-first-N rerun
+    raw_df = [v for f in forks for v in f[drop_n:]]
     if raw_df and len(raw_df) < len(raw):
-        print(f"  --- after dropping first iter of each fork ({len(raw)-len(raw_df)} dropped) ---")
-        s_df = summarize("drop-first", raw_df)
+        print(f"  --- after dropping first {drop_n} iter(s) of each fork ({len(raw)-len(raw_df)} dropped) ---")
+        s_df = summarize(f"drop-first-{drop_n}", raw_df)
     else:
         s_df = s_all
     return raw, raw_df
 
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__); sys.exit(1)
-    b_raw, b_df = process(sys.argv[1], "baseline")
-    if len(sys.argv) >= 3:
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--drop-first", type=int, default=1, dest="drop_first",
+                    help="How many iters of each fork to drop in the drop-first rerun (default: 1).")
+    ap.add_argument("--help", "-h", action="store_true")
+    ap.add_argument("paths", nargs="*")
+    args = ap.parse_args()
+    if args.help or not args.paths:
+        print(__doc__); sys.exit(0 if args.help else 1)
+    drop_n = max(0, args.drop_first)
+    b_raw, b_df = process(args.paths[0], "baseline", drop_n=drop_n)
+    if len(args.paths) >= 2:
         print()
-        p_raw, p_df = process(sys.argv[2], "postchange")
+        p_raw, p_df = process(args.paths[1], "postchange", drop_n=drop_n)
         print("\n=== Comparison (all iters) ===")
         compare(b_raw, p_raw)
-        print("\n=== Comparison (drop-first) ===")
+        print(f"\n=== Comparison (drop-first-{drop_n}) ===")
         compare(b_df, p_df)
 
 if __name__ == "__main__":
