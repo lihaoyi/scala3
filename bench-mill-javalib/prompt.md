@@ -1,4 +1,4 @@
-Please profile the compiler, run benchmarks, and optimize the hot-spots to improve its performance.
+Please profile the compiler and optimize the hot-spots to improve its performance.
 
 1. Review the `git log -p main..head` to see any recent changes. Run a compile
    instrumenting the JVM both with JFR (1ms sample period) and `-Vprofile` so you can get a
@@ -22,13 +22,9 @@ Please profile the compiler, run benchmarks, and optimize the hot-spots to impro
    Anything from micro-optimizations to broader cross-cutting changes can be considered.
    Even a fraction of a % improvement can be valuable as they add up over time.
    Feel free to add your own call counters if necessary and run more clean compiles to confirm
-   hypotheses about hot spots and how often they are called. Run benchmarks before
-   and after your change to measure the actual % improvement. Use 10 warmup runs and 20
-   measurement runs with `-gc true` to try and narrow the confidence interval. Apart from relying
-   on the overall benchmark to see if an improvement is significant, re-run the
+   hypotheses about hot spots and how often they are called. Re-run the JFR
    profiler after making the change and see if the expected drop in the time taken for that
-   particular method actually happens; even if the overall benchmark is too noisy a clear 
-   signal from JFR that a method is taking less time is valuable
+   particular method actually happens
 
 4. Run basic smoke-tests to make sure your change doesn't break anything. If
    anything breaks, have the sub-agent report the breakage. As a smoketest, compile
