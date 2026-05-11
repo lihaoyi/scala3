@@ -14,9 +14,9 @@
 #   --vprofile           Add -Vprofile (compiler source/method complexity report).
 #   --ystats             Add -Ystats (compiler internal stats; needs a Stats.enabled rebuild).
 #   --yprofile           Add -Yprofile-enabled and write per-phase wall/CPU/alloc to a CSV.
-#   --yprofile-out FILE  Override default CSV (bench-mill-javalib/build/profile/yprofile.csv).
+#   --yprofile-out FILE  Override default CSV (bench-mill-javalib/target/build/profile/yprofile.csv).
 #   --no-jfr             Disable JFR.
-#   --jfr-out FILE       JFR output file (default: bench-mill-javalib/build/profile/profile.jfr).
+#   --jfr-out FILE       JFR output file (default: bench-mill-javalib/target/build/profile/profile.jfr).
 #   --runs N             Number of compiles in a single JVM (default 3).
 #   -- ...               Anything after `--` is forwarded as extra dotc args.
 
@@ -25,7 +25,7 @@ set -euo pipefail
 SCALA3_DIR="/Users/lihaoyi/Github/scala3"
 BENCH_DIR="${SCALA3_DIR}/bench-mill-javalib"
 INPUTS_DIR="${BENCH_DIR}/inputs"
-BUILD_DIR="${BENCH_DIR}/build"
+BUILD_DIR="${BENCH_DIR}/target/build"
 PROFILE_DIR="${BUILD_DIR}/profile"
 mkdir -p "${PROFILE_DIR}"
 

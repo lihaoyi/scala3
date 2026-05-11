@@ -119,8 +119,8 @@ Helper scripts for benchmarking the local Scala 3 compiler against
   Example:
   ```
   python3 agent-scripts/analyze-jmh.py \
-    bench-mill-javalib/build/jmh-iter14-baseline.json \
-    bench-mill-javalib/build/jmh-iter14-postchange.json
+    bench-mill-javalib/target/build/jmh-iter14-baseline.json \
+    bench-mill-javalib/target/build/jmh-iter14-postchange.json
   ```
 
 ## Outputs
@@ -134,11 +134,11 @@ Helper scripts for benchmarking the local Scala 3 compiler against
 | `scalac-options.txt` | scalac options used by Mill's `libs.javalib`, including `-Xplugin:` entries |
 | `_*.json` | raw JSON dumps from `mill show` (not consumed by the benchmark) |
 
-`bench-mill-javalib/build/`
+`bench-mill-javalib/target/build/`
 
 Built by `run-bench.sh`. Wiped on each invocation.
 
-`bench-mill-javalib/build/profile/` (created by `profile.sh`):
+`bench-mill-javalib/target/build/profile/` (created by `profile.sh`):
 
 | file | purpose |
 | --- | --- |

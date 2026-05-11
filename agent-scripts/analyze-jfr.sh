@@ -10,7 +10,7 @@
 # we care about compiler work, not GC threads etc.
 #
 # Optional args:
-#   --jfr PATH         JFR file to analyze (default: bench-mill-javalib/build/profile/profile.jfr)
+#   --jfr PATH         JFR file to analyze (default: bench-mill-javalib/target/build/profile/profile.jfr)
 #   --top N            Number of rows to print (default 30)
 #   --skip-warmup-sec S  Skip the first S seconds of samples (warmup) (default 0)
 #   --filter STR       Only include methods whose fully-qualified name contains STR
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 SCALA3_DIR="/Users/lihaoyi/Github/scala3"
-DEFAULT_JFR="${SCALA3_DIR}/bench-mill-javalib/build/profile/profile.jfr"
+DEFAULT_JFR="${SCALA3_DIR}/bench-mill-javalib/target/build/profile/profile.jfr"
 
 JFR_FILE="${DEFAULT_JFR}"
 TOP=30
