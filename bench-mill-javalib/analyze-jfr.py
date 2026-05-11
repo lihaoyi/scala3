@@ -150,21 +150,27 @@ def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
         return
     print(f"\n=== Bottom-up reverse forest (top {top_n} self methods, "
           f"caller >= {leaf_pct_threshold:.1f}% of leaf samples) ===")
-    print(f"  For each leaf, the tree below walks OUT to callers. Columns:")
+    print(f"  Each `---` block has a leaf hotspot (marked `*`) followed by")
+    print(f"  its caller chain (marked `^`, walking OUT toward main).")
+    print(f"  Columns:")
     print(f"    tot%  = % of ALL profile samples whose stack contains")
-    print(f"            this caller-chain ending at the leaf.")
+    print(f"            this caller-chain ending at the leaf. The leaf's")
+    print(f"            own row reports its self %.")
     print(f"    leaf% = % of the LEAF method's own samples that came in")
-    print(f"            through this caller chain.")
-    print(f"  E.g. 'leaf 2.0% / 328 samples' header + caller row '1.23 60.37'")
-    print(f"  means 198 of the leaf's 328 samples (=60.37%) flowed through")
-    print(f"  that caller, and 198 is 1.23% of all profile samples.\n")
-    print(f"  {'tot%':>6} {'leaf%':>6}  caller tree")
+    print(f"            through this caller chain. Always 100% on the")
+    print(f"            leaf row itself; sums of direct callers ≈ 100%")
+    print(f"            modulo threshold-pruned siblings.\n")
+    print(f"  {'tot%':>6} {'leaf%':>6}  call tree")
 
     for method, leaf_count in own.most_common(top_n):
         root = build_bottom_up(stacks, method)
         leaf_pct = 100 * leaf_count / kept
         floor = leaf_count * leaf_pct_threshold / 100.0
-        print(f"\n  --- {method}  [self {leaf_pct:.2f}% of all samples, {leaf_count} samples]")
+        # Print the leaf hotspot itself as a normal row (tot% = its share of
+        # all samples, leaf% = 100% by definition). The `---` separator alone
+        # delimits leaf sub-trees; callers below get the standard `^` prefix.
+        print(f"\n  ---")
+        print(f"  {leaf_pct:6.2f} {100.0:6.2f}  * {method}")
 
         def walk(node: Node, depth: int) -> None:
             if depth > max_depth:
