@@ -15,7 +15,7 @@ takes to do a clean compile of Mill's `libs.javalib` module graph.
 | `quick-bench.py` | thin wrapper around `run-bench.py` that prints a stats summary |
 | `profile.py` | run the bench under JFR / `-Yprofile-enabled` for hot-method analysis |
 | `analyze-jmh.py` | post-process JMH JSON: bootstrap CI, drop-first, paired delta |
-| `analyze-jfr.py` | aggregate hot methods from a JFR file |
+| `analyze-jfr.py` | aggregate hot methods from a JFR file (flat tables + top-down call tree + bottom-up reverse forest) |
 | `_common.py` | shared paths and subprocess helpers |
 
 Generated state (gitignored) lives under `target/bench-mill-javalib/`:
@@ -28,4 +28,25 @@ Generated state (gitignored) lives under `target/bench-mill-javalib/`:
 ./setup-bench.py                # one time, populates target/bench-mill-javalib/{inputs,sources}
 ./quick-bench.py NAME           # short single-config run, prints SD/CI/iters
 ./run-bench.py [--warmup N ...] # full JMH run, JSON only
+./profile.py --runs 8 --jfr-out target/bench-mill-javalib/profile.jfr  # JFR profile
+./analyze-jfr.py --jfr target/bench-mill-javalib/profile.jfr \
+                 --skip-warmup-sec 25 --top 50 \
+                 --tree-threshold 1.0 \
+                 --reverse-top 10 --reverse-threshold 10.0
 ```
+
+`analyze-jfr.py` prints four sections:
+1. **Top by SELF time** — flat table of hot leaf methods.
+2. **Top by TOTAL/INCLUSIVE time** — flat table of methods that appear
+   anywhere in the stack.
+3. **Top-down call tree** — every node shows `tot%` (samples passing
+   through) and `self%` (samples ending here). Nodes below
+   `--tree-threshold` (% of total samples) or beyond `--tree-depth` are
+   pruned.
+4. **Bottom-up reverse forest** — for each of the top
+   `--reverse-top` self-timed methods, a tree of callers walking
+   outward. `--reverse-threshold` is interpreted as % of the leaf
+   method's own samples, so each sub-forest is independently scannable.
+
+Use `--no-tree` / `--no-reverse` to suppress either tree if only the
+flat tables are wanted.
