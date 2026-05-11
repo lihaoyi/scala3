@@ -160,14 +160,23 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
     case _ =>
       Stats.record(statsItem("lookup"))
       maybeRemoveStaleEntries()
-      val bucket = index(hash(elem))
+      val h = hash(elem)
+      val bucket = index(h)
 
+      // `entry.hash == h` is checked before `entry.get`. The cached hash is a
+      // direct field load on the Entry, while `entry.get` is the polymorphic
+      // WeakReference.get() call (a JNI intrinsic + barrier). Within a single
+      // bucket many entries collide on `index(hash)` but disagree on the full
+      // hash, so this short-circuit skips the expensive get/equals work for
+      // chain entries with different hashes — a workload-independent win.
       @tailrec
       def linkedListLoop(entry: Entry[A] | Null): A | Null = entry match {
         case null                    => null
         case _                       =>
-          val entryElem = entry.get
-          if entryElem != null && isEqual(elem, entryElem) then entryElem
+          if entry.hash == h then
+            val entryElem = entry.get
+            if entryElem != null && isEqual(elem, entryElem) then entryElem
+            else linkedListLoop(entry.tail)
           else linkedListLoop(entry.tail)
       }
 
@@ -193,12 +202,15 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
       val bucket = index(h)
       val oldHead = table(bucket)
 
+      // See `lookup` for the rationale on the `entry.hash == h` short-circuit.
       @tailrec
       def linkedListLoop(entry: Entry[A] | Null): A = entry match {
         case null                    => addEntryAt(bucket, elem, h, oldHead)
         case _                       =>
-          val entryElem = entry.get
-          if entryElem != null && isEqual(elem, entryElem) then entryElem.uncheckedNN
+          if entry.hash == h then
+            val entryElem = entry.get
+            if entryElem != null && isEqual(elem, entryElem) then entryElem.uncheckedNN
+            else linkedListLoop(entry.tail)
           else linkedListLoop(entry.tail)
       }
 
@@ -212,13 +224,17 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
     case _ =>
       Stats.record(statsItem("-="))
       maybeRemoveStaleEntries()
-      val bucket = index(hash(elem))
+      val h = hash(elem)
+      val bucket = index(h)
 
+      // See `lookup` for the rationale on the `entry.hash == h` short-circuit.
       @tailrec
       def linkedListLoop(prevEntry: Entry[A] | Null, entry: Entry[A] | Null): Unit =
         if entry != null then
-          val entryElem = entry.get
-          if entryElem != null && isEqual(elem, entryElem) then remove(bucket, prevEntry, entry)
+          if entry.hash == h then
+            val entryElem = entry.get
+            if entryElem != null && isEqual(elem, entryElem) then remove(bucket, prevEntry, entry)
+            else linkedListLoop(entry, entry.tail)
           else linkedListLoop(entry, entry.tail)
 
       linkedListLoop(null, table(bucket))

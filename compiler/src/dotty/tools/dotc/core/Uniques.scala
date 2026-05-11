@@ -35,13 +35,7 @@ object Uniques:
     if tp.hash == NotCached then tp
     else ctx.uniques.put(tp).asInstanceOf[T]
 
-  // Initial capacity doubled (was * 4) so the table avoids one resize cycle in
-  // the early phases when the cache is coldest and lookups are densest. Mill
-  // libs.javalib creates O(100k-1M) NamedTypes per Context; at the prior * 4
-  // (128k slots, 0.5 load, resize at 64k entries) JFR shows
-  // `NamedTypeUniques.linkedListLoop$1` at 1.98% self-time. Extra cost is
-  // ~1MB array on heap per Context — negligible vs. type-graph memory.
-  final class NamedTypeUniques extends WeakHashSet[NamedType](Config.initialUniquesCapacity * 8) with Hashable:
+  final class NamedTypeUniques extends WeakHashSet[NamedType](Config.initialUniquesCapacity * 4) with Hashable:
     override def hash(x: NamedType): Int = x.hash
 
     def enterIfNew(prefix: Type, designator: Designator, isTerm: Boolean)(using Context): NamedType =
@@ -62,12 +56,16 @@ object Uniques:
         val bucket = index(h)
         val oldHead = table(bucket)
 
+        // See WeakHashSet.lookup for rationale on the `entry.hash == h`
+        // short-circuit (skip the WeakReference.get/eq checks when hashes differ).
         @tailrec
         def linkedListLoop(entry: Entry[NamedType] | Null): NamedType = entry match
           case null                    => addEntryAt(bucket, newType, h, oldHead)
           case _                       =>
-            val e = entry.get
-            if e != null && (e.prefix eq prefix) && (e.designator eq designator) && (e.isTerm == isTerm) then e
+            if entry.hash == h then
+              val e = entry.get
+              if e != null && (e.prefix eq prefix) && (e.designator eq designator) && (e.isTerm == isTerm) then e
+              else linkedListLoop(entry.tail)
             else linkedListLoop(entry.tail)
 
         linkedListLoop(oldHead)
@@ -99,12 +97,16 @@ object Uniques:
         val bucket = index(h)
         val oldHead = table(bucket)
 
+        // See WeakHashSet.lookup for rationale on the `entry.hash == h`
+        // short-circuit.
         @tailrec
         def linkedListLoop(entry: Entry[AppliedType] | Null): AppliedType = entry match
           case null                    => addEntryAt(bucket, newType, h, oldHead)
           case _                       =>
-            val e = entry.get
-            if e != null && (e.tycon eq tycon) && e.args.eqElements(args) then e
+            if entry.hash == h then
+              val e = entry.get
+              if e != null && (e.tycon eq tycon) && e.args.eqElements(args) then e
+              else linkedListLoop(entry.tail)
             else linkedListLoop(entry.tail)
 
         linkedListLoop(oldHead)
