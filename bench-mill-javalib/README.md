@@ -48,11 +48,22 @@ prints two sections:
    `--reverse-top` self-timed methods, a tree of callers walking
    outward. The header line for each leaf shows its self-time count
    (and `% of all samples`), which subsumes the previous flat
-   "top by self time" table. Columns:
-   - `tot%` = % of all samples whose stack reaches the leaf via this
-     caller chain (same denominator as top-down's `tot%`).
-   - `leaf%` = % of the leaf method's own self samples that came in
-     through this caller path.
+   "top by self time" table.
+
+   Columns (both inclusive, not self time):
+   - `tot%` = % of **all profile samples** (denominator = every kept
+     sample in the JFR) whose stack contains this caller-chain ending
+     at the leaf. Same denominator as top-down's `tot%`.
+   - `leaf%` = % of the **leaf method's own samples** (denominator =
+     the leaf's sample count, shown in its header) that flowed through
+     this caller path.
+
+   Worked example: if a leaf reads
+   `--- Objects.equals  [self 2.04% of all samples, 328 samples]`
+   and a caller row reads `1.23  60.37  ^ SourceFile.equals:123`,
+   that means **198 of the leaf's 328 samples** (60.37%) came in
+   through `SourceFile.equals` — and those 198 samples are **1.23%
+   of the whole profile** (1.23% × kept ≈ 198).
 
    `--reverse-threshold` (default 5%) keeps any caller whose share of
    the leaf method's samples is >= the threshold. The simple

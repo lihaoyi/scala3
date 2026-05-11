@@ -150,6 +150,14 @@ def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
         return
     print(f"\n=== Bottom-up reverse forest (top {top_n} self methods, "
           f"caller >= {leaf_pct_threshold:.1f}% of leaf samples) ===")
+    print(f"  For each leaf, the tree below walks OUT to callers. Columns:")
+    print(f"    tot%  = % of ALL profile samples whose stack contains")
+    print(f"            this caller-chain ending at the leaf.")
+    print(f"    leaf% = % of the LEAF method's own samples that came in")
+    print(f"            through this caller chain.")
+    print(f"  E.g. 'leaf 2.0% / 328 samples' header + caller row '1.23 60.37'")
+    print(f"  means 198 of the leaf's 328 samples (=60.37%) flowed through")
+    print(f"  that caller, and 198 is 1.23% of all profile samples.\n")
     print(f"  {'tot%':>6} {'leaf%':>6}  caller tree")
 
     for method, leaf_count in own.most_common(top_n):
