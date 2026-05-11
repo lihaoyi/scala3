@@ -37,6 +37,16 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
   protected var count = 0
 
   /**
+   * counter used to amortize calls to `removeStaleEntries`. Polling the
+   * ReferenceQueue enters its monitor on every call, which is unnecessary work
+   * on read-only operations: `lookup` and friends already tolerate stale entries
+   * via the `entry.get == null` check. Bumping this each op and only polling
+   * every 256 ops drops most of the monitor traffic without unbounded queue growth.
+   */
+  private var staleCheckCounter = 0
+  private inline val staleCheckMask = 0xFF
+
+  /**
    * from a specified initial capacity compute the capacity we'll use as being the next
    * power of two equal to or greater than the specified initial capacity
    */
@@ -76,6 +86,14 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
       case _ => prevEntry.tail = entry.tail
     }
     count -= 1
+  }
+
+  /** Amortized stale-entry sweep: fires roughly every 256 ops instead of every op,
+   *  avoiding a `ReferenceQueue.poll()` monitor enter on the read-only hot path.
+   */
+  private def maybeRemoveStaleEntries(): Unit = {
+    staleCheckCounter += 1
+    if (staleCheckCounter & staleCheckMask) == 0 then removeStaleEntries()
   }
 
   /**
@@ -139,7 +157,7 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
     case null => throw new NullPointerException("WeakHashSet cannot hold nulls")
     case _ =>
       Stats.record(statsItem("lookup"))
-      removeStaleEntries()
+      maybeRemoveStaleEntries()
       val bucket = index(hash(elem))
 
       @tailrec
@@ -168,7 +186,7 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
     case null => throw new NullPointerException("WeakHashSet cannot hold nulls")
     case _    =>
       Stats.record(statsItem("put"))
-      removeStaleEntries()
+      maybeRemoveStaleEntries()
       val h = hash(elem)
       val bucket = index(h)
       val oldHead = table(bucket)
@@ -191,7 +209,7 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
     case null =>
     case _ =>
       Stats.record(statsItem("-="))
-      removeStaleEntries()
+      maybeRemoveStaleEntries()
       val bucket = index(hash(elem))
 
       @tailrec
