@@ -1,12 +1,3 @@
-Run the following prompt in a sub-agent. Repeat until I interrupt you. Review the results
-from each iteration's sub-agent and adjust it as necessary to unblock or guide future iterations.
-Avoid doing heavy lifting yourself and focus on reviewing the sub-agent's work and ensuring it 
-did not miss any of the instructions; if it did miss something please prompt the sub-agent to
-do what it forgot.
-
----
-
-
 Please profile the compiler, run benchmarks, and optimize the hot-spots to improve its performance.
 
 1. Review the `git log -p main..head` to see any recent changes. Run a compile
@@ -37,9 +28,10 @@ Please profile the compiler, run benchmarks, and optimize the hot-spots to impro
    hypotheses about hot spots and how often they are called. Run benchmarks before
    and after your change to measure the actual % improvement. Use 10 warmup runs and 20
    measurement runs with `-gc true` to try and narrow the confidence interval. Apart from relying
-   on the overall benchmark to see if an improvement is significant, you can also re-run the
+   on the overall benchmark to see if an improvement is significant, re-run the
    profiler after making the change and see if the expected drop in the time taken for that
-   particular method actually happens
+   particular method actually happens; even if the overall benchmark is too noisy a clear 
+   signal from JFR that a method is taking less time is valuable
 
 4. Run basic smoke-tests to make sure your change doesn't break anything. If
    anything breaks, have the sub-agent report the breakage. As a smoketest, compile
