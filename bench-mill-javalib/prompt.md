@@ -6,7 +6,7 @@ stops prematurely, adjust its prompt if it needs guidance.
 
 Please profile the compiler and optimize the hot-spots to improve its performance.
 
-1. Review the `git log -p main..head` to see any recent changes. Run a compile
+1. Review the `git log -p main..head compiler` to see any recent changes. Run a compile
    instrumenting the JVM both with JFR (1ms sample period) and `-Vprofile` so you can get a
    performance profile you can analyze. If the profile is not clean, do whatever it takes to get a
    clean profile that clearly illustrates where time is being spent during compilation. Analyze
