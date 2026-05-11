@@ -1143,19 +1143,21 @@ class Inliner(val call: tpd.Tree)(using Context):
       def updateRefCount(sym: Symbol, inc: Int) =
         for (x <- refCount.get(sym)) refCount(sym) = x + inc
       def updateTermRefCounts(tree: Tree) =
-        tree.typeOpt.foreachPart {
-          case ref: TermRef => updateRefCount(ref.symbol, 2) // can't be inlined, so make sure refCount is at least 2
-          case _ =>
-        }
+        if !refCount.isEmpty then
+          tree.typeOpt.foreachPart {
+            case ref: TermRef => updateRefCount(ref.symbol, 2) // can't be inlined, so make sure refCount is at least 2
+            case _ =>
+          }
       def countRefs(tree: Tree) =
-        tree.foreachSubTree {
-          case t: RefTree =>
-            updateRefCount(t.symbol, 1)
-            updateTermRefCounts(t)
-          case t @ (_: New | _: TypeTree) =>
-            updateTermRefCounts(t)
-          case _ =>
-        }
+        if !refCount.isEmpty then
+          tree.foreachSubTree {
+            case t: RefTree =>
+              updateRefCount(t.symbol, 1)
+              updateTermRefCounts(t)
+            case t @ (_: New | _: TypeTree) =>
+              updateTermRefCounts(t)
+            case _ =>
+          }
       countRefs(tree)
       for (binding <- bindings) countRefs(binding)
 
