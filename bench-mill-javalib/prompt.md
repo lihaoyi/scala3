@@ -9,7 +9,8 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
    up the callsite, or data structures that could be improved.
 
 2. Spawn five extra-high-effort sub-agents to analyze the JFR profiles and try to find 
-   opportunities for optimization. Based on JFR and -Vprofile and -Ystats, 
+   opportunities for optimization. Based on JFR top-down and bottom-up call tree profiles and
+   -Vprofile and -Ystats data, 
    come up with *high-level algorithm, data structure, or architectural improvements*
    that would substantially improve the performance of the compiler, rather than minor micro-optimizations
    or nitpicks. For each agent that reports optimization opportunities, spawn a second agent to
