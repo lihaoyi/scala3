@@ -1550,9 +1550,15 @@ object Types extends TypeUtils {
             alias.dealias(keeps)
           case _ => tp
       case app @ AppliedType(tycon, _) =>
-        val tycon1 = tycon.dealias(keeps)
-        if tycon1 ne tycon then app.superType.dealias(keeps)
-        else this
+        // Fast path: AppliedType applied to a class TypeRef is its own dealias.
+        // `currentSymbol` does not force the denotation (cheap designator unwrap);
+        // a non-class result falls through to the generic recursion safely.
+        tycon match
+          case tycon: TypeRef if tycon.currentSymbol.isClass => this
+          case _ =>
+            val tycon1 = tycon.dealias(keeps)
+            if tycon1 ne tycon then app.superType.dealias(keeps)
+            else this
       case tp: TypeVar =>
         val tp1 = tp.instanceOpt
         if tp1.exists then tp1.dealias(keeps) else tp
