@@ -1,5 +1,8 @@
 Run the following prompt in a sub-agent. Repeat until I interrupt you. Review the results
 from each iteration's sub-agent and adjust it as necessary to unblock or guide future iterations.
+Avoid doing heavy lifting yourself and focus on reviewing the sub-agent's work and ensuring it 
+did not miss any of the instructions; if it did miss something please prompt the sub-agent to
+do what it forgot.
 
 ---
 
