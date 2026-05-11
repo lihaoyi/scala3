@@ -128,8 +128,8 @@ def print_top_down(root: Node, kept: int, threshold_pct: float, max_depth: int) 
 
 def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
                     own: collections.Counter[str],
-                    kept: int, top_n: int, parent_pct: float,
-                    leaf_floor_pct: float, max_depth: int) -> None:
+                    kept: int, top_n: int, leaf_pct_threshold: float,
+                    max_depth: int) -> None:
     """For each of top-N self-timed methods, print a reverse caller tree.
 
     Columns:
@@ -139,41 +139,30 @@ def print_bottom_up(stacks: list[tuple[list[str], list[str]]],
       leaf% = % of the leaf method's OWN self samples that flowed
               through this caller path.
 
-    Two thresholds combine to keep chains meaningful without blowing
-    out the file size:
-      `parent_pct` (--reverse-threshold)   keep callers that account for
-                                           >= this % of THEIR PARENT's
-                                           samples. Lets long dominant
-                                           chains extend all the way
-                                           back toward `main`.
-      `leaf_floor_pct` (--reverse-floor)   absolute floor — drop nodes
-                                           contributing < this % of the
-                                           leaf method's samples. Stops
-                                           chains from running into
-                                           1-2-sample noise.
+    A caller node is kept iff it accounts for >= `leaf_pct_threshold` of
+    the leaf method's samples. This is the simplest filter and the most
+    intuitive: any caller that's a meaningful fraction of the leaf's
+    time shows up, including SIBLINGS at the same depth (so branching
+    survives). Recursive chains naturally self-terminate because samples
+    decay along the chain and eventually fall below the threshold.
     """
     if kept == 0 or top_n <= 0:
         return
     print(f"\n=== Bottom-up reverse forest (top {top_n} self methods, "
-          f"caller >= {parent_pct:.1f}% of parent AND >= {leaf_floor_pct:.1f}% "
-          f"of leaf) ===")
+          f"caller >= {leaf_pct_threshold:.1f}% of leaf samples) ===")
     print(f"  {'tot%':>6} {'leaf%':>6}  caller tree")
 
     for method, leaf_count in own.most_common(top_n):
         root = build_bottom_up(stacks, method)
         leaf_pct = 100 * leaf_count / kept
-        floor = leaf_count * leaf_floor_pct / 100.0
+        floor = leaf_count * leaf_pct_threshold / 100.0
         print(f"\n  --- {method}  [self {leaf_pct:.2f}% of all samples, {leaf_count} samples]")
 
         def walk(node: Node, depth: int) -> None:
             if depth > max_depth:
                 return
-            parent_total = node.total
             kids = sorted(node.children.values(), key=lambda n: -n.total)
             for kid in kids:
-                # Two filters: dominant-of-parent AND meaningful-vs-leaf.
-                if kid.total * 100.0 < parent_total * parent_pct:
-                    continue
                 if kid.total < floor:
                     continue
                 tot = 100 * kid.total / kept                 # % of all samples
@@ -226,18 +215,14 @@ def main():
     ap.add_argument("--reverse-top", type=int, default=20,
                     help="Bottom-up forest: include reverse tree for the "
                          "top-N self-time methods (default 20).")
-    ap.add_argument("--reverse-threshold", type=float, default=50.0,
-                    help="Bottom-up forest: min %% of the *parent* node's "
-                         "samples to keep a caller (default 50.0). Long "
-                         "dominant chains (each link >= threshold of its "
-                         "predecessor) stay visible to the root.")
-    ap.add_argument("--reverse-floor", type=float, default=10.0,
-                    help="Bottom-up forest: absolute floor — drop callers "
-                         "contributing less than this %% of the leaf "
-                         "method's own samples (default 10.0). Stops "
-                         "chains from running into 1-2-sample noise.")
-    ap.add_argument("--reverse-depth", type=int, default=20,
-                    help="Bottom-up forest: max depth (default 20).")
+    ap.add_argument("--reverse-threshold", type=float, default=5.0,
+                    help="Bottom-up forest: keep a caller node iff it "
+                         "accounts for at least this %% of the leaf "
+                         "method's own samples (default 5.0). Smaller "
+                         "value = more branching + deeper chains; "
+                         "larger value = tighter trees.")
+    ap.add_argument("--reverse-depth", type=int, default=30,
+                    help="Bottom-up forest: max depth (default 30).")
     ap.add_argument("--with-lines", action=argparse.BooleanOptionalAction, default=True,
                     help="Append JFR-reported line numbers to method names "
                          "in the tree views (default on). Aggregates "
@@ -370,8 +355,7 @@ def run_analysis(args):
         print_top_down(root, kept, args.tree_threshold, args.tree_depth)
     if args.reverse:
         print_bottom_up(stacks, own, kept, args.reverse_top,
-                        args.reverse_threshold, args.reverse_floor,
-                        args.reverse_depth)
+                        args.reverse_threshold, args.reverse_depth)
 
 
 if __name__ == "__main__":

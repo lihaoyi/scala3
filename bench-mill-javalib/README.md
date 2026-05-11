@@ -54,11 +54,11 @@ prints two sections:
    - `leaf%` = % of the leaf method's own self samples that came in
      through this caller path.
 
-   Two filters combine: `--reverse-threshold` keeps callers that are
-   >= X% of their **parent**'s samples (default 30%), letting long
-   dominant chains extend all the way back toward `main`. The
-   `--reverse-floor` (default 3% of leaf samples) is an absolute floor
-   so chains don't run into 1-2-sample noise.
+   `--reverse-threshold` (default 5%) keeps any caller whose share of
+   the leaf method's samples is >= the threshold. The simple
+   leaf-relative cutoff lets siblings at the same level survive (so
+   branching shows up), while recursive chains self-terminate as their
+   sample share decays below the threshold.
 
 Use `--no-tree` / `--no-reverse` to suppress either tree.
 
