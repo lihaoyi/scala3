@@ -1,4 +1,4 @@
-/loop Please profile the compiler, run benchmarks, and optimize the hot-spots to improve its performance.
+Please profile the compiler, run benchmarks, and optimize the hot-spots to improve its performance.
 
 1. Review the `git log -p main..head` to see any recent changes. Run a compile
    instrumenting the JVM both with JFR (1ms sample period) and `-Vprofile` so you can get a
@@ -8,16 +8,15 @@
    whether bottlenecks at the bottom of the call stack, algorithmically inefficient code further
    up the callsite, or data structures that could be improved.
 
-2. Analyze the JFR profiles and try to find opportunities for optimization.
-   When analyzing JFR profiles, make sure
+2. Spawn extra-high-effort sub-agents to analyze the JFR profiles and try to find 
+   opportunities for optimization. When analyzing JFR profiles, make sure
    to look for both methods who have a very high "own time" suggesting they could benefit from being
    micro-optimized, and also methods that have a very high "total time" including all methods
    they call (transitively) suggesting that they could benefit from higher-level optimizations
    that would let them be called less often. Based on JFR and -Vprofile and -Ystats, please
    try hard to come up with high-level algorithm, data structure, or architectural improvements
    that would substantially improve the performance of the compiler, rather than minor micro-optimizations
-   or nitpicks. Spawn extra-high-effort sub-agents to further investigate areas with optimization
-   potential. For each agent that reports optimization opportunities, spawn a second agent to
+   or nitpicks. For each agent that reports optimization opportunities, spawn a second agent to
    deeply investigate the proposed optimizations and how they fit into the relevant parts of the
    codebase and performance profiles to verify if they are legitimate.
 
