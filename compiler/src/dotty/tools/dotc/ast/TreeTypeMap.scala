@@ -57,6 +57,19 @@ class TreeTypeMap(
   private val substToArr: Array[Symbol] =
     if substFrom.isEmpty then Substituters.emptySymArray else Substituters.listToSymArray(substTo)
 
+  // `mapOwnerThis` only substitutes ThisType prefixes whose `cls` matches a
+  // ClassSymbol in `oldOwners`; entries that aren't ClassSymbols are stepped
+  // over without effect. When `oldOwners` contains no ClassSymbols at all
+  // (e.g. Inliner's initial `inlinedMethod :: Nil`), the whole TypeMap walk
+  // is a no-op on every NamedType visited — precompute the gate once.
+  private val hasOwnerClass: Boolean =
+    var xs = oldOwners
+    var found = false
+    while !found && (xs ne Nil) do
+      if xs.head.isClass then found = true
+      xs = xs.tail
+    found
+
   /** If `sym` is one of `oldOwners`, replace by corresponding symbol in `newOwners` */
   def mapOwner(sym: Symbol): Symbol = sym.subst(oldOwners, newOwners)
 
@@ -92,9 +105,10 @@ class TreeTypeMap(
             case tp: TermRef if tp.symbol.isImport => mapOver(tp)
             case tp => tp.substSym(fromArr, toArr)
         substMap(mappedTp)
-    // Fast path: when there are no owner remappings, mapOwnerThis is the
-    // identity. Skip allocating the TypeMap walk in that case.
-    if oldOwners.isEmpty then substituted else mapOwnerThis(substituted)
+    // Fast path: when no ClassSymbol appears in `oldOwners`, `mapOwnerThis`
+    // is the identity (the recursion in `mapPrefix` only substitutes for
+    // ClassSymbol entries). Skip the TypeMap walk in that case.
+    if !hasOwnerClass then substituted else mapOwnerThis(substituted)
   end mapType
 
   private def updateDecls(prevStats: List[Tree], newStats: List[Tree]): Unit =
