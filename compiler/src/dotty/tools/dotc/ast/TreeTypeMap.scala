@@ -6,6 +6,7 @@ import core.*
 import Types.*, Contexts.*, Flags.*
 import Symbols.*, Annotations.*, Trees.*, Symbols.*, Constants.Constant
 import Decorators.*
+import config.Config
 
 
 /** A map that applies three functions and a substitution together to a tree and
@@ -224,10 +225,11 @@ class TreeTypeMap(
       // setting up a proper substitution abstraction with a compose operator that
       // guarantees idempotence. But this might be too inefficient in some cases.
       // We'll cross that bridge when we need to.
-      assert(!from.exists(substTo contains _))
-      assert(!to.exists(substFrom contains _))
-      assert(!from.exists(newOwners contains _))
-      assert(!to.exists(oldOwners contains _))
+      if Config.checkSubstitutionIdempotent then
+        assert(!from.exists(substTo contains _))
+        assert(!to.exists(substFrom contains _))
+        assert(!from.exists(newOwners contains _))
+        assert(!to.exists(oldOwners contains _))
       copy(
         typeMap,
         treeMap,

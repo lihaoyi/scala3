@@ -17,6 +17,11 @@ object Config {
 
   inline val checkCacheMembersNamed = false
 
+  /** Check that TreeTypeMap substitutions stay idempotent. Disabled by default
+   *  because the per-call asserts can dominate inlining hot paths.
+   */
+  inline val checkSubstitutionIdempotent = false
+
   /** When updating a constraint bound, check that the constrained parameter
    *  does not appear at the top-level of either of its bounds.
    */
