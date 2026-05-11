@@ -46,15 +46,6 @@ class CheckUnused private (phaseMode: PhaseMode, suffix: String) extends MiniPha
 
   override def isRunnable(using Context): Boolean = super.isRunnable && ctx.settings.WunusedHas.any && !ctx.isJava
 
-  // PostPatMat (Report mode) only walks `tree.call` of Inlined nodes; it does not
-  // need the macro-expanded `tree.expansion` subtree, since `resolveUsage`
-  // filters non-user-code idents anyway. Skipping the expansion walk is a
-  // meaningful win on heavily-inlined code.
-  // Aggregate (PostTyper) and Resolve (PostInlining) modes still need the
-  // expansion: PostTyper registers definitions inside it, PostInlining picks
-  // up references introduced by the inliner.
-  override def skipInlinedExpansion: Boolean = phaseMode == PhaseMode.Report
-
   override def prepareForUnit(tree: Tree)(using Context): Context =
     val infos = tree.getAttachment(refInfosKey).getOrElse:
       RefInfos().tap(tree.withAttachment(refInfosKey, _))
