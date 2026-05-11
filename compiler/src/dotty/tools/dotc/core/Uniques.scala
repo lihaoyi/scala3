@@ -48,9 +48,11 @@ object Uniques:
         catch case ex: InvalidPrefix => badPrefix(prefix, designator)
       if h == NotCached then newType
       else
-        // Inlined from WeakHashSet#put
+        // Inlined from WeakHashSet#put. Uses the amortized `maybeRemoveStaleEntries`
+        // (fires every ~256 ops) instead of `removeStaleEntries()`, to drop the
+        // `ReferenceQueue.poll()` monitor enter from the hot type-construction path.
         Stats.record(statsItem("put"))
-        removeStaleEntries()
+        maybeRemoveStaleEntries()
         val bucket = index(h)
         val oldHead = table(bucket)
 
@@ -83,9 +85,11 @@ object Uniques:
       if monitored then recordCaching(h, classOf[CachedAppliedType])
       if h == NotCached then newType
       else
-        // Inlined from WeakHashSet#put
+        // Inlined from WeakHashSet#put. Uses the amortized `maybeRemoveStaleEntries`
+        // (fires every ~256 ops) instead of `removeStaleEntries()`, to drop the
+        // `ReferenceQueue.poll()` monitor enter from the hot type-construction path.
         Stats.record(statsItem("put"))
-        removeStaleEntries()
+        maybeRemoveStaleEntries()
         val bucket = index(h)
         val oldHead = table(bucket)
 

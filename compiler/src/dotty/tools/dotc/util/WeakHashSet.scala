@@ -90,8 +90,10 @@ abstract class WeakHashSet[A <: AnyRef](initialCapacity: Int = 8, loadFactor: Do
 
   /** Amortized stale-entry sweep: fires roughly every 256 ops instead of every op,
    *  avoiding a `ReferenceQueue.poll()` monitor enter on the read-only hot path.
+   *  `protected` so subclasses that inline the put/lookup logic (e.g. `Uniques`)
+   *  can use it instead of calling `removeStaleEntries()` directly.
    */
-  private def maybeRemoveStaleEntries(): Unit = {
+  protected def maybeRemoveStaleEntries(): Unit = {
     staleCheckCounter += 1
     if (staleCheckCounter & staleCheckMask) == 0 then removeStaleEntries()
   }
