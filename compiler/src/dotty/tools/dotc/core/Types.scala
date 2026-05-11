@@ -2493,7 +2493,26 @@ object Types extends TypeUtils {
       // Even if checkedPeriod == now we still need to recheck lastDenotation.validFor
       // as it may have been mutated by SymDenotation#installAfter
       if checkedPeriod != Nowhere && lastd.validFor.contains(ctx.period) then lastd
-      else computeDenot
+      else denotSlowPath(lastd)
+
+    private def denotSlowPath(lastd: Denotation)(using Context): Denotation =
+      // iter42 B-1: single-step nextInRun fast path skips full goBack ring walk
+      // when the immediate next variant in the ring is valid at ctx.period.
+      // Common when TypeComparer cycles backward through phase variants.
+      lastd match
+        case lastd: SingleDenotation =>
+          val nxt = lastd.nextInRun
+          if !ctx.isRechecking
+              && (nxt ne lastd)
+              && lastd.validFor != Nowhere
+              && nxt.validFor != Nowhere
+              && nxt.validFor.runId == ctx.runId
+              && nxt.validFor.contains(ctx.period)
+          then
+            setDenot(nxt)
+            nxt
+          else computeDenot
+        case _ => computeDenot
 
     private def computeDenot(using Context): Denotation = {
       util.Stats.record("NamedType.computeDenot")

@@ -727,7 +727,7 @@ object Denotations {
      *  2) the union of all validity periods is a contiguous
      *     interval.
      */
-    protected var nextInRun: SingleDenotation = this
+    private[core] var nextInRun: SingleDenotation = this
 
     /** The version of this SingleDenotation that was valid in the first phase
      *  of this run.

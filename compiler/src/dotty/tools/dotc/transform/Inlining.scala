@@ -143,6 +143,14 @@ class Inlining extends MacroTransform, IdentityDenotTransformer {
               throw ex
 
     override def transform(tree: Tree)(using Context): Tree = {
+      // iter42 D-H1: avoid 4-layer dispatch chain for leaf trees that
+      // can never be inline calls and don't need a source-context switch.
+      // `inlineFinder` gate skips the optimization when dep collection is on.
+      if (tree.isInstanceOf[Ident] || tree.isInstanceOf[Literal] || tree.isInstanceOf[This])
+          && (inlineFinder == null)
+          && !Inlines.needsInlining(tree)
+          && (tree.source eq ctx.source)
+      then return tree
       val result = tree match
         case tree: MemberDef =>
           // Fetch the latest tracked tree (It might have already been transformed by its companion)
