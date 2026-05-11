@@ -34,7 +34,9 @@ def main():
     ap.add_argument("--yprofile-out", type=Path, default=PROFILE_DIR / "yprofile.csv")
     ap.add_argument("--no-jfr", dest="use_jfr", action="store_false")
     ap.add_argument("--jfr-out", type=Path, default=PROFILE_DIR / "profile.jfr")
-    ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--runs", type=int, default=8,
+                    help="Number of compile passes in one JVM. Higher = more JFR samples after "
+                         "warmup. Default 8 yields ~5x the sample density of the prior default 3.")
     ap.add_argument("dotc_extra", nargs=argparse.REMAINDER)
     args = ap.parse_args()
     extra = args.dotc_extra[1:] if args.dotc_extra[:1] == ["--"] else args.dotc_extra

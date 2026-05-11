@@ -33,7 +33,7 @@ def hms_ms_seconds(h: str, m: str, s: str, ms: str) -> float:
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--jfr", type=Path, default=DEFAULT_JFR)
-    ap.add_argument("--top", type=int, default=30)
+    ap.add_argument("--top", type=int, default=100)
     ap.add_argument("--skip-warmup-sec", type=float, default=0.0)
     ap.add_argument("--filter", default="")
     ap.add_argument("--no-jdk", action="store_true")
