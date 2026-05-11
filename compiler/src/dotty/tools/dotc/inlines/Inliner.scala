@@ -206,6 +206,8 @@ class Inliner(val call: tpd.Tree)(using Context):
   protected val inlinedMethod = methPart.symbol
   private val inlineCallPrefix =
      qualifier(methPart).orElse(This(inlinedMethod.enclosingClass.asClass))
+  private val inlineMethodSeesOpaques: Boolean =
+    inlinedMethod.enclosingClass.seesOpaques
 
   // Make sure all type arguments to the call are fully determined,
   // but continue if that's not achievable (or else i7459.scala would crash).
@@ -407,6 +409,7 @@ class Inliner(val call: tpd.Tree)(using Context):
    *  type aliases, add proxy definitions to `opaqueProxies` that expose these aliases.
    */
   private def addOpaqueProxies(tp: Type, span: Span, forThisProxy: Boolean)(using Context): Unit =
+    if !forThisProxy && !inlineMethodSeesOpaques then return
     val foreachTpPart =
       (p: Type => Unit) =>
         if forThisProxy then
