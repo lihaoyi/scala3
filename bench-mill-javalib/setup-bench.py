@@ -2,38 +2,26 @@
 """One-time setup: populate target/bench-mill-javalib/{sources,inputs}/ from
 Mill's published Maven Central artifacts.
 
-Downloads source jars for the Mill module graph rooted at `mill-libs-javalib`,
-extracts them into `sources/`, resolves the binary compile classpath with
-coursier, and writes `compile-classpath.txt`, `scalac-options.txt`, and
-`source-files.txt` into `inputs/`.
+Downloads source jars for the Mill module graph rooted at `mill-libs`, extracts
+them into `sources/<jar-stem>/...` (one subdirectory per source jar so files at
+the same path in different jars do not overwrite each other — e.g. several Mill
+modules ship top-level `ScalaModule.scala` files), resolves the binary compile
+classpath with coursier, and writes `compile-classpath.txt`, `scalac-options.txt`,
+and `source-files.txt` into `inputs/`. Coursier resolves the full transitive
+closure of `mill-*` artifacts under `mill-libs`, so the corpus covers every
+Mill module the umbrella pulls in (javalib, scalalib, kotlinlib, core-*, etc.).
 
-Re-run when MILL_VERSION or MILL_MODULES changes; idempotent otherwise.
+Re-run when MILL_VERSION or MILL_ROOT_MODULE changes; idempotent otherwise.
 """
 from __future__ import annotations
 import argparse, os, shutil, subprocess, sys, zipfile
 from pathlib import Path
 from _common import BENCH_DIR, INPUTS_DIR, SOURCES_DIR, run
 
-# Mill modules to recompile from source. The Scala modules are published with
-# `_3` suffix; the two Java-only modules have no suffix.
+# Root Mill umbrella module. Coursier walks its dependency graph and we recompile
+# every transitive `mill-*` artifact from source. Published as `mill-libs_3`.
 MILL_VERSION = "1.1.6"
-MILL_SCALA_MODULES = [
-    "libs-javalib",
-    "libs-util",
-    "libs-rpc",
-    "libs-javalib-api",
-    "libs-javalib-testrunner",
-    "core-api",
-    "core-api-daemon",
-    "core-api-java11",
-    "libs-daemon-server",
-    "libs-daemon-client",
-    "libs-util-java11",
-]
-MILL_JAVA_MODULES = [
-    "core-constants",
-    "libs-javalib-testrunner-entrypoint",
-]
+MILL_ROOT_MODULE = "libs"
 
 # These track the Scala binary version used by Mill at the chosen MILL_VERSION.
 SCALA_PLUGIN_BINARY_VERSION = "3.8.2"
@@ -56,10 +44,8 @@ SCALAC_OPTIONS_TAIL = [
     "-Xkind-projector:underscores",
 ]
 
-def mill_coords(version: str) -> list[str]:
-    scala = [f"com.lihaoyi:mill-{m}_3:{version}" for m in MILL_SCALA_MODULES]
-    java = [f"com.lihaoyi:mill-{m}:{version}" for m in MILL_JAVA_MODULES]
-    return scala + java
+def mill_root_coord(version: str) -> str:
+    return f"com.lihaoyi:mill-{MILL_ROOT_MODULE}_3:{version}"
 
 def cs_fetch(coords: list[str], *, sources: bool = False) -> list[Path]:
     cmd = ["cs", "fetch", "-p", *coords]
@@ -71,19 +57,29 @@ def cs_fetch(coords: list[str], *, sources: bool = False) -> list[Path]:
 def is_mill_jar(p: Path) -> bool:
     return p.name.startswith("mill-") and p.name.endswith(".jar")
 
+def jar_subdir_name(jar: Path) -> str:
+    # mill-libs-scalalib_3-1.1.6-sources.jar -> mill-libs-scalalib_3-1.1.6
+    name = jar.name
+    if name.endswith("-sources.jar"):
+        name = name[:-len("-sources.jar")]
+    elif name.endswith(".jar"):
+        name = name[:-len(".jar")]
+    return name
+
 def extract_sources(jars: list[Path], dest: Path) -> int:
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     count = 0
     for jar in jars:
+        sub = dest / jar_subdir_name(jar)
         with zipfile.ZipFile(jar) as zf:
             for info in zf.infolist():
                 if info.is_dir():
                     continue
                 if not (info.filename.endswith(".scala") or info.filename.endswith(".java")):
                     continue
-                target = dest / info.filename
+                target = sub / info.filename
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(info) as src, open(target, "wb") as out:
                     shutil.copyfileobj(src, out)
@@ -96,18 +92,19 @@ def main():
                     help=f"Mill version on Maven Central (default {MILL_VERSION}).")
     args = ap.parse_args()
     INPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    module_coords = mill_coords(args.mill_version)
-    all_modules = MILL_SCALA_MODULES + MILL_JAVA_MODULES
+    root_coord = mill_root_coord(args.mill_version)
 
     print(f"[setup-bench] Mill version: {args.mill_version}")
-    print(f"[setup-bench] Modules ({len(all_modules)}): {', '.join(all_modules)}")
+    print(f"[setup-bench] Root module:  {root_coord}")
 
-    print("[setup-bench] Fetching Mill source jars ...")
-    source_jars = [j for j in cs_fetch(module_coords, sources=True)
+    print("[setup-bench] Fetching Mill source jars (transitive) ...")
+    source_jars = [j for j in cs_fetch([root_coord], sources=True)
                    if j.name.endswith("-sources.jar") and j.name.startswith("mill-")]
     print(f"[setup-bench]   {len(source_jars)} mill-* source jars")
+    for j in sorted(source_jars):
+        print(f"[setup-bench]     {j.name}")
 
-    print(f"[setup-bench] Extracting sources -> {SOURCES_DIR}")
+    print(f"[setup-bench] Extracting sources -> {SOURCES_DIR} (per-jar subdirs)")
     n = extract_sources(source_jars, SOURCES_DIR)
     print(f"[setup-bench]   {n} source files extracted")
 
@@ -120,7 +117,7 @@ def main():
     print(f"[setup-bench]   source-files.txt: {len(src_list)} entries")
 
     print("[setup-bench] Resolving compile classpath ...")
-    cp_jars = cs_fetch(module_coords + EXTRA_COMPILE_DEPS)
+    cp_jars = cs_fetch([root_coord] + EXTRA_COMPILE_DEPS)
     external = [j for j in cp_jars if not is_mill_jar(j)]
     (INPUTS_DIR / "compile-classpath.txt").write_text(
         "\n".join(str(j) for j in external) + "\n"
