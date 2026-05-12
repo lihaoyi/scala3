@@ -8,7 +8,7 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
 
 1. (1 subagent) Review the `git log -p main..head compiler` to see any recent changes, enumerating
    both succesful and failed attempts at optimization we have done in the past that you
-   should understand so as not to waste time repeating completed workq. Run a compile
+   should understand so as not to waste time repeating completed work. Run a compile
    instrumenting the JVM both with JFR (1ms sample period) and `-Vprofile` so you can get a
    performance profile you can analyze. If the profile is not clean, do whatever it takes to get a
    clean profile that clearly illustrates where time is being spent during compilation.
