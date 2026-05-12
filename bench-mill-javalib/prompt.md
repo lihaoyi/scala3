@@ -6,9 +6,9 @@ and do not stop until I interrupt you explicitly
 Please profile the compiler and optimize the hot-spots to improve its performance.
 
 
-1. (1 subagent) Review the `git log -p main..head compiler` to see any recent changes, especially to 
-   `git log main..head --pretty=oneline | grep reverted` which lists failed attempts that you
-   should understand so as not to waste time on the same failure. Run a compile
+1. (1 subagent) Review the `git log -p main..head compiler` to see any recent changes, enumerating
+   both succesful and failed attempts at optimization we have done in the past that you
+   should understand so as not to waste time repeating completed workq. Run a compile
    instrumenting the JVM both with JFR (1ms sample period) and `-Vprofile` so you can get a
    performance profile you can analyze. If the profile is not clean, do whatever it takes to get a
    clean profile that clearly illustrates where time is being spent during compilation.
