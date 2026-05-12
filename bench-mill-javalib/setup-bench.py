@@ -38,10 +38,29 @@ PLUGINS = [
 EXTRA_COMPILE_DEPS = [
     f"org.scala-lang:scala3-compiler_3:{SCALA_PLUGIN_BINARY_VERSION}",
 ]
+# Mill 1.1.6 sources use `_` as the existential wildcard in type positions
+# (e.g. `Visitor[_, T]`, `Failure[_]`). `-Xkind-projector:underscores` would
+# repurpose that as a kind-projector type lambda, which breaks dozens of
+# files; we leave it off and rely on Scala 3's normal wildcard semantics.
 SCALAC_OPTIONS_TAIL = [
     "-deprecation",
     "-feature",
-    "-Xkind-projector:underscores",
+]
+
+# Patches applied after source extraction so the corpus compiles as a single
+# unit. Mill builds each module separately, so cross-module name clashes never
+# surface in its own pipeline; we hit them because every module lives in one
+# compilation here. Each entry is (glob relative to SOURCES_DIR, list of plain
+# string substitutions).
+SOURCE_PATCHES: list[tuple[str, list[tuple[str, str]]]] = [
+    # `mill.api.ScriptModule` uses unqualified `internal.X` to mean
+    # `mill.api.internal.X`, but `import mill.*` brings the top-level
+    # `mill.internal` package (from mill-core-internal_3) into scope and
+    # shadows the subpackage. Fully qualify the references.
+    ("mill-core-api_3-*/mill/api/ScriptModule.scala", [
+        ("internal.Located",    "mill.api.internal.Located"),
+        ("internal.Appendable", "mill.api.internal.Appendable"),
+    ]),
 ]
 
 def mill_root_coord(version: str) -> str:
@@ -65,6 +84,19 @@ def jar_subdir_name(jar: Path) -> str:
     elif name.endswith(".jar"):
         name = name[:-len(".jar")]
     return name
+
+def apply_source_patches(root: Path) -> None:
+    for pattern, subs in SOURCE_PATCHES:
+        for p in sorted(root.glob(pattern)):
+            text = p.read_text()
+            new = text
+            n = 0
+            for old, repl in subs:
+                n += new.count(old)
+                new = new.replace(old, repl)
+            if new != text:
+                p.write_text(new)
+                print(f"[setup-bench]   patched {p.relative_to(root)} ({n} substitutions)")
 
 def extract_sources(jars: list[Path], dest: Path) -> int:
     if dest.exists():
@@ -107,6 +139,9 @@ def main():
     print(f"[setup-bench] Extracting sources -> {SOURCES_DIR} (per-jar subdirs)")
     n = extract_sources(source_jars, SOURCES_DIR)
     print(f"[setup-bench]   {n} source files extracted")
+
+    print("[setup-bench] Applying source patches ...")
+    apply_source_patches(SOURCES_DIR)
 
     src_list = sorted(
         str(p.relative_to(SOURCES_DIR))
