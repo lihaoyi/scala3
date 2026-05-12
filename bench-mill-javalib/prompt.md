@@ -16,7 +16,8 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
    or nitpicks. For each agent that reports optimization opportunities, spawn a second agent to
    deeply investigate the proposed optimizations and how they fit into the relevant parts of the
    codebase and performance profiles to verify if they are legitimate and satisfy the requirements 
-   above.
+   above. If no proposed optimizations can be validated here, please spawn another set of five agents
+   and repeat the process until some potential optimizations can be found
 
 3. Pick the issues that are most likely to substantially improve the performance of the `~/Github/mill`
    compilation given your profile analysis - potentially more than one - and implement them.
