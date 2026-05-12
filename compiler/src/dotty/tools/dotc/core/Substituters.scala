@@ -88,7 +88,12 @@ object Substituters:
             return substSym(tp.prefix, from, to, theMap).select(to(i))
           i += 1
         }
-        if (tp.prefix `eq` NoPrefix) tp
+        // Static owners (packages, top-level objects) close their prefix chain
+        // over more static owners. `from` here is always locally-introduced
+        // symbols (typeParams, params, locals), which can never appear inside
+        // a static-owner prefix chain. Skipping the prefix recursion in that
+        // case is the same trick `substThis` already uses (line 115).
+        if (tp.currentSymbol.isStaticOwner || (tp.prefix `eq` NoPrefix)) tp
         else tp.derivedSelect(substSym(tp.prefix, from, to, theMap))
       case tp: ThisType =>
         val sym = tp.cls
@@ -162,7 +167,9 @@ object Substituters:
         // with cached results, so the binder is reference-equal.
         if ((tp.binder eq from) || tp.binder == from) to(tp.paramNum) else tp
       case tp: NamedType =>
-        if (tp.prefix `eq` NoPrefix) tp
+        // Static-owner prefix chains (packages, top-level objects) contain no
+        // `ParamRef` to `from`, so the recursion is provably a no-op.
+        if (tp.currentSymbol.isStaticOwner || (tp.prefix `eq` NoPrefix)) tp
         else tp.derivedSelect(substParams(tp.prefix, from, to, theMap))
       case _: ThisType =>
         tp
