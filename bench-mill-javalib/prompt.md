@@ -1,12 +1,7 @@
-Please repeatedly spawn a sub-agents to perform the following instructions. Do not do the heavy lifting yourself
-but leave it to the subagent. Your job is to monitor the sub-agent: prompt it to continue if it
-stops prematurely, adjust its prompt if it needs guidance. Continue iterating with subagents
-and do not stop until I interrupt you explicitly
-
 Please profile the compiler and optimize the hot-spots to improve its performance.
 
 
-1. (1 subagent) Review the `git log -p main..head compiler` to see any recent changes, enumerating
+1. Review the `git log -p main..head compiler` to see any recent changes, enumerating
    both succesful and failed attempts at optimization we have done in the past that you
    should understand so as not to waste time repeating completed work. Run a compile
    instrumenting the JVM both with JFR (1ms sample period) and `-Vprofile` so you can get a
@@ -23,7 +18,7 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
    codebase and performance profiles to verify if they are legitimate and satisfy the requirements 
    above.
 
-3. (1 subagent) Pick the issues that are most likely to substantially improve the performance of the `~/Github/mill`
+3. Pick the issues that are most likely to substantially improve the performance of the `~/Github/mill`
    compilation given your profile analysis - potentially more than one - and implement them.
    Anything from micro-optimizations to broader cross-cutting changes can be considered.
    Even a fraction of a % improvement can be valuable as they add up over time.
@@ -32,7 +27,7 @@ Please profile the compiler and optimize the hot-spots to improve its performanc
    profiler after making the change and see if the expected drop in the time taken for that
    particular method actually happens
 
-4. (1 subagent) Run basic smoke-tests to make sure your change doesn't break anything. If
+4. Run basic smoke-tests to make sure your change doesn't break anything. If
    anything breaks, have the sub-agent report the breakage. As a smoketest, compile
    the bootstrapped compiler and standard library. If it succeeds, make a `git commit`
    with an explanation for what the most recent `git diff` change is mean to accomplish, or just
