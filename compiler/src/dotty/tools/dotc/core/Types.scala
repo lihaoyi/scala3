@@ -4696,6 +4696,14 @@ object Types extends TypeUtils {
   abstract case class AppliedType(tycon: Type, args: List[Type])
   extends CachedProxyType with ValueType {
 
+    /** A hash of `args` element identities, used as a fast pre-filter
+     *  before `args.eqElements(...)` in the AppliedUniques probe loop.
+     *  Safe (and identity-preserving) because `args` is immutable and
+     *  Types are hash-consed, so structurally-equal args share `eq`-equal
+     *  elements. Computed once at construction.
+     */
+    private[core] val argsEqHash: Int
+
     private var validSuper: Period = Nowhere
     private var cachedSuper: Type = uninitialized
 
@@ -4856,7 +4864,12 @@ object Types extends TypeUtils {
     }
   }
 
-  final class CachedAppliedType(tycon: Type, args: List[Type], hc: Int) extends AppliedType(tycon, args) {
+  final class CachedAppliedType(
+      tycon: Type,
+      args: List[Type],
+      hc: Int,
+      private[core] val argsEqHash: Int
+  ) extends AppliedType(tycon, args) {
     myHash = hc
   }
 
@@ -4865,6 +4878,7 @@ object Types extends TypeUtils {
       assertUnerased()
       ctx.base.uniqueAppliedTypes.enterIfNew(tycon, args)
     }
+
   }
 
   // ----- BoundTypes: ParamRef, RecThis ----------------------------------------
