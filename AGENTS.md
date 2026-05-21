@@ -2,7 +2,6 @@
 
 This file provides guidance to AI coding agents when working with code in this repository.
 
-**Important**: Read `CONTRIBUTING.md`, in particular the "Forbidden" section!
 
 ## Project Overview
 
