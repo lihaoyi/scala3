@@ -5940,7 +5940,7 @@ object Types extends TypeUtils {
     def appliedRef(using Context): Type = {
       if (appliedRefCache == null)
         appliedRefCache =
-          TypeRef(prefix, cls).appliedTo(cls.classDenot.typeParams.map(_.typeRef))
+          TypeRef(prefix, cls).appliedTo(cls.classDenot.typeParamRefs)
       appliedRefCache.nn
     }
 
