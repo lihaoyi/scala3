@@ -58,6 +58,14 @@ object SymDenotations {
     private var myAnnotations: List[Annotation] = Nil
     private var myParamss: List[List[Symbol]] = Nil
 
+    // 1-slot RunId-keyed cache for isStaticOwner. The predicate reads only
+    // FromStartFlags (ModuleClass/PackageClass via myFlags) plus the
+    // constructor-fixed owner chain (through isStatic), all of which are fixed
+    // for the lifetime of a SymDenotation within a run, so RunId-keying alone
+    // is sound with no explicit invalidation hook.
+    private var myStaticOwnerRunId: RunId = NoRunId
+    private var myStaticOwnerCached: Boolean = false
+
     /** Invalidate caches whose result depends on `isAbsent` / base-class data.
      *  Overridden in ClassDenotation to reset the per-runId derivesFrom cache.
      */
@@ -762,7 +770,13 @@ object SymDenotations {
 
     /** Is this a package class or module class that defines static symbols? */
     final def isStaticOwner(using Context): Boolean =
-      myFlags.is(ModuleClass) && (myFlags.is(PackageClass) || isStatic)
+      val rid = ctx.runId
+      if myStaticOwnerRunId == rid then myStaticOwnerCached
+      else
+        val res = myFlags.is(ModuleClass) && (myFlags.is(PackageClass) || isStatic)
+        myStaticOwnerCached = res
+        myStaticOwnerRunId = rid
+        res
 
     /** Is this denotation defined in the same scope and compilation unit as that symbol? */
     final def isCoDefinedWith(other: Symbol)(using Context): Boolean =
