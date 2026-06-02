@@ -1912,6 +1912,16 @@ object SymDenotations {
     private var baseDataCache: BaseData = BaseData.None
     private var memberNamesCache: MemberNames = MemberNames.None
 
+    // Cache of the resolved parent ClassDenotations, keyed by BOTH ctx.period
+    // and ClassInfo identity. computeMembersNamed/computeBaseData/computeMemberNames
+    // otherwise re-resolve p.classSymbol.denot for every declared parent on every
+    // walk (~4.4M times/compile). The cache is populated only when every declared
+    // parent resolves to a ClassDenotation (otherwise null + fall back to the
+    // original type walk), and is cleared by info_= (which can change the parents).
+    private var myParentClassDenotsPeriod: Period = Nowhere
+    private var myParentClassDenotsInfo: ClassInfo | Null = null
+    private var myParentClassDenots: Array[ClassDenotation] | Null = null
+
     // 2-slot RunId-keyed cache for derivesFrom. derivesFrom is called very
     // frequently (subtyping, isAbsent/toPrefix, base-type probing) and each
     // miss scans baseClassSet via BaseClassSet.contains. Two slots cover the
@@ -1959,6 +1969,12 @@ object SymDenotations {
     private def invalidateMemberNamesCache() = {
       memberNamesCache.invalidate()
       memberNamesCache = MemberNames.None
+    }
+
+    private def invalidateParentClassDenotsCache(): Unit = {
+      myParentClassDenotsPeriod = Nowhere
+      myParentClassDenotsInfo = null
+      myParentClassDenots = null
     }
 
     def invalidateBaseTypeCache(): Unit = {
@@ -2036,9 +2052,46 @@ object SymDenotations {
         invalidateBaseDataCache()
       invalidateMemberNamesCache()
       invalidateAbsentSensitiveCaches()
+      invalidateParentClassDenotsCache()
       myTypeParams = null // changing the info might change decls, and with it typeParams
       super.info_=(tp)
     }
+
+    /** The resolved parent ClassDenotations for `cinfo`, cached per (period, ClassInfo).
+     *  Returns `null` (and does not cache a positive result) if any declared parent
+     *  fails to resolve to a ClassDenotation, so callers fall back to the original
+     *  parent-type walk for unusual parent shapes.
+     *
+     *  Soundness: `ClassInfo.parents = declaredParents.mapConserve(_.asSeenFrom(...))`,
+     *  and asSeenFrom preserves a parent's class symbol, so the ClassDenotation set
+     *  resolved from `declaredParents` is identical to what a walk over `info.parents`
+     *  resolves. The cache is keyed on the exact `ctx.period` and the `cinfo` identity
+     *  and is cleared by `info_=`, so a parent change invalidates it.
+     */
+    private def parentClassDenots(cinfo: ClassInfo)(using Context): Array[ClassDenotation] | Null =
+      val period = ctx.period
+      if myParentClassDenotsPeriod == period && (myParentClassDenotsInfo eq cinfo) then
+        myParentClassDenots
+      else
+        val parents = cinfo.declaredParents
+        val denots = new Array[ClassDenotation](parents.length)
+        var ps = parents
+        var i = 0
+        while ps.nonEmpty do
+          ps.head.classSymbol.denot match
+            case parentd: ClassDenotation =>
+              denots(i) = parentd
+              i += 1
+              ps = ps.tail
+            case _ =>
+              myParentClassDenotsPeriod = period
+              myParentClassDenotsInfo = cinfo
+              myParentClassDenots = null
+              return null
+        myParentClassDenotsPeriod = period
+        myParentClassDenotsInfo = cinfo
+        myParentClassDenots = denots
+        denots
 
     /** The types of the parent classes. */
     def parentTypes(using Context): List[Type] = info match
@@ -2115,7 +2168,12 @@ object SymDenotations {
     def computeBaseData(implicit onBehalf: BaseData, ctx: Context): (List[ClassSymbol], BaseClassSet) = {
       def emptyParentsExpected =
         is(Package) || (symbol == defn.AnyClass) || ctx.erasedTypes && (symbol == defn.ObjectClass)
-      val parents = parentTypes
+      val cinfo = info match
+        case cinfo: ClassInfo => cinfo
+        case _ =>
+          if (!emptyParentsExpected) onBehalf.signalProvisional()
+          return (classSymbol :: Nil, BaseClassSet(Nil))
+      val parents = cinfo.declaredParents
       if (parents.isEmpty && !emptyParentsExpected)
         onBehalf.signalProvisional()
       val builder = new BaseDataBuilder
@@ -2146,7 +2204,14 @@ object SymDenotations {
           traverse(parents1)
         case nil =>
       }
-      traverse(parents)
+      val parentDenots = parentClassDenots(cinfo)
+      if parentDenots != null then
+        var i = 0
+        while i < parentDenots.length do
+          builder.addAll(parentDenots(i).baseClasses)
+          i += 1
+      else
+        traverse(parents)
       (classSymbol :: builder.baseClasses, builder.baseClassSet)
     }
 
@@ -2362,8 +2427,29 @@ object SymDenotations {
             case _ =>
               denots1
         case nil => denots
+      // Iterative form of `collect` over the cached parent ClassDenotations,
+      // walking i = length-1 downto 0 to reproduce the exact right-to-left fold
+      // the recursion produces (the recursion does collect(denots, ps) first,
+      // then processes the head), so mapInherited's prevDenots shadowing is
+      // byte-identical. Empty parent contributions skip the mapInherited+union
+      // framing via `if inherited.exists` (union(x, NoDenotation) == x and
+      // mapInherited on an empty set is a no-op).
+      def collectFromParentDenots(parentDenots: Array[ClassDenotation]): PreDenotation =
+        var denots = ownDenots
+        var i = parentDenots.length - 1
+        while i >= 0 do
+          val inherited = parentDenots(i).membersNamedNoShadowingBasedOnFlags(name, required, excluded | Private)
+          if inherited.exists then denots = denots.union(inherited.mapInherited(ownDenots, denots, thisType))
+          i -= 1
+        denots
       if name.isConstructorName then ownDenots
-      else collect(ownDenots, info.parents)
+      else info match
+        case cinfo: ClassInfo =>
+          val parentDenots = parentClassDenots(cinfo)
+          if parentDenots != null then collectFromParentDenots(parentDenots)
+          else collect(ownDenots, cinfo.parents)
+        case _ =>
+          collect(ownDenots, info.parents)
 
     override final def findMember(name: Name, pre: Type, required: FlagSet, excluded: FlagSet)(using Context): Denotation =
       val raw = if excluded.is(Private) then nonPrivateMembersNamed(name) else membersNamed(name)
@@ -2546,16 +2632,27 @@ object SymDenotations {
       var names = Set[Name]()
       def maybeAdd(name: Name) = if (keepOnly(thisType, name)) names += name
       try {
-        for ptype <- parentTypes do
-          ptype.classSymbol match
-            case pcls: ClassSymbol =>
-              for name <- pcls.memberNames(keepOnly) do
-                maybeAdd(name)
-            case _ =>
-              // Parent failed to resolve to a class (the missing
-              // reference has been reported by computeBaseData).
-              // Skip here to avoid a secondary MatchError.
-              // See scala/scala3#20010.
+        info match
+          case cinfo: ClassInfo =>
+            val parentDenots = parentClassDenots(cinfo)
+            if parentDenots != null then
+              var i = 0
+              while i < parentDenots.length do
+                for name <- parentDenots(i).memberNames(keepOnly) do
+                  maybeAdd(name)
+                i += 1
+            else
+              for ptype <- cinfo.declaredParents do
+                ptype.classSymbol match
+                  case pcls: ClassSymbol =>
+                    for name <- pcls.memberNames(keepOnly) do
+                      maybeAdd(name)
+                  case _ =>
+                    // Parent failed to resolve to a class (the missing
+                    // reference has been reported by computeBaseData).
+                    // Skip here to avoid a secondary MatchError.
+                    // See scala/scala3#20010.
+          case _ =>
         val ownSyms =
           if (keepOnly eq implicitFilter)
             if (this.is(Package)) Iterator.empty
