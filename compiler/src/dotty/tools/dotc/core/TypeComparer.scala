@@ -55,6 +55,7 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     errorNotes = Nil
     undoLog.clear()
     frozenConstraint = false
+    atomCacheActive = false
     if Config.checkTypeComparerReset then checkReset()
 
   private var pendingSubTypes: util.MutableSet[(Type, Type)] | Null = null
@@ -115,6 +116,7 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     assert(approx == ApproxState.Fresh)
     assert(leftRoot == null)
     assert(frozenGadt == false)
+    assert(atomCacheActive == false)
 
   /** Record that GADT bounds of `sym` were used in a subtype check.
    *  But exclude constructor type parameters, as these are aliased
@@ -218,6 +220,9 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
   protected def isSubType(tp1: Type, tp2: Type, a: ApproxState): Boolean = {
     val savedApprox = approx
     val savedLeftRoot = leftRoot
+    val outermost = recCount == 0
+    if outermost then
+      atomCacheActive = false
     if (a == ApproxState.Fresh) {
       this.approx = ApproxState.None
       this.leftRoot = tp1
@@ -230,6 +235,8 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     finally {
       this.approx = savedApprox
       this.leftRoot = savedLeftRoot
+      if outermost then
+        atomCacheActive = false
     }
   }
 
@@ -1806,9 +1813,9 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
         finally canCompareAtoms = true
       result
 
-    tp2.atoms match
+    comparisonAtoms(tp2) match
       case Atoms.Range(lo2, hi2) if canCompareAtoms && canCompare(hi2) =>
-        tp1.atoms match
+        comparisonAtoms(tp1) match
           case Atoms.Range(lo1, hi1) =>
             if hi1.subsetOf(lo2) || knownSingletons && hi2.size == 1 && hi1 == hi2 then
               Some(verified(true))
@@ -1818,6 +1825,48 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
               None
           case _ => Some(verified(recur(tp1, NothingType)))
       case _ => None
+
+  // Comparer-local direct-mapped identity cache for compareAtoms operands,
+  // active only within one outermost subtype comparison (generation-stamped);
+  // memoizes stable Range and Unknown results for non-OrType operands.
+  private inline val AtomCacheSize = 64
+  private val atomCacheKeys = new Array[Type | Null](AtomCacheSize)
+  private val atomCacheValues = new Array[Atoms | Null](AtomCacheSize)
+  private val atomCacheIds = new Array[Int](AtomCacheSize)
+  private var atomCacheId = 0
+  private var atomCacheActive = false
+
+  private inline def ensureAtomCache(): Unit =
+    if !atomCacheActive then
+      atomCacheActive = true
+      atomCacheId += 1
+      if atomCacheId == 0 then
+        java.util.Arrays.fill(atomCacheIds, 0)
+        atomCacheId = 1
+
+  private inline def atomCacheIndex(tp: Type): Int =
+    System.identityHashCode(tp) & (AtomCacheSize - 1)
+
+  private def comparisonAtoms(tp: Type): Atoms = tp match
+    case _: OrType => tp.atoms
+    case _ =>
+      ensureAtomCache()
+      val idx = atomCacheIndex(tp)
+      if atomCacheIds(idx) == atomCacheId && (atomCacheKeys(idx) eq tp) then
+        atomCacheValues(idx).nn
+      else
+        val atoms = tp.atoms
+        atoms match
+          case _: Atoms.Range if !tp.isProvisional && !CapturingType.isUncachable(tp) =>
+            atomCacheKeys(idx) = tp
+            atomCacheValues(idx) = atoms
+            atomCacheIds(idx) = atomCacheId
+          case Atoms.Unknown if !tp.isProvisional && !CapturingType.isUncachable(tp) =>
+            atomCacheKeys(idx) = tp
+            atomCacheValues(idx) = atoms
+            atomCacheIds(idx) = atomCacheId
+          case _ =>
+        atoms
 
   /** Subtype test for corresponding arguments in `args1`, `args2` according to
    *  variances in type parameters `tparams2`.
