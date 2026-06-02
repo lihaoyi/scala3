@@ -1845,8 +1845,16 @@ class Definitions {
    *  instance?
    */
   def isNonRefinedFunction(tp: Type)(using Context): Boolean = {
-    val arity = functionArity(tp)
-    val sym = tp.dealias.typeSymbol
+    // `tp` was dealiased multiple times here (once inside `functionArity` →
+    // `functionArgInfos`, again at `tp.dealias.typeSymbol`). `dealias` is idempotent,
+    // so dealias once into `d` and reuse it for both the arity (via `functionArgInfosOf`)
+    // and the symbol; `isRef` keeps `tp` (its dealias of an already-dealiased
+    // AppliedType/TypeRef is a no-op). This removes redundant leading dealias calls
+    // without reading any new symbol (`d.typeSymbol` is the symbol `tp.dealias.typeSymbol`
+    // already read).
+    val d = tp.dealias
+    val arity = d.functionArgInfosOf(d).length - 1
+    val sym = d.typeSymbol
 
     arity >= 0
     && isFunctionClass(sym)
