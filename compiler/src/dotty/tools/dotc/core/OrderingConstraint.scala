@@ -428,10 +428,12 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
    *  @param add   if true, entries is added, otherwise it is dropped
    */
   def adjustDeps(poly: TypeLambda, entries: Array[Type], add: Boolean)(using Context): this.type =
+    // `poly.paramRefs(n)` (List.apply) is O(n); inside this counted loop it is
+    // O(n^2). Use the memoized array-indexed `paramRef(n)` accessor for O(1).
     for n <- 0 until paramCount(entries) do
       if add
-      then adjustDeps(entries(n), NoType, poly.paramRefs(n))
-      else adjustDeps(NoType, entries(n), poly.paramRefs(n))
+      then adjustDeps(entries(n), NoType, poly.paramRef(n))
+      else adjustDeps(NoType, entries(n), poly.paramRef(n))
     this
 
   /** Remove all reverse dependencies of `param` */
@@ -523,9 +525,13 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
     var current = this
     val todos = new mutable.ListBuffer[(OrderingConstraint, TypeParamRef) => OrderingConstraint]
     var i = 0
+    // `poly.paramRefs(i)` (List.apply, O(i)) and `poly.paramNames.length`
+    // (O(n) per probe) made this loop O(n^2). Hoist the length once and use the
+    // memoized array-indexed `paramRef(i)` accessor for O(1) element access.
+    val n = poly.paramNames.length
     val dropWildcards = AvoidWildcardsMap()
-    while (i < poly.paramNames.length) {
-      val param = poly.paramRefs(i)
+    while (i < n) {
+      val param = poly.paramRef(i)
       val bounds = dropWildcards(nonParamBounds(param))
       val stripped = stripParams(bounds, todos, isUpper = true)
       current = boundsLens.update(this, current, param, stripped)
