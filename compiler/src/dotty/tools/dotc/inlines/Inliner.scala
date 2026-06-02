@@ -1137,24 +1137,49 @@ class Inliner(val call: tpd.Tree)(using Context):
         bindingOfSym(binding.symbol) = binding
       }
 
+      // Number of tracked (inlineable) bindings whose refCount has not yet saturated at 2.
+      // Only counts in {0, 1, 2} are observable by `retain` and `inlineBindings` (which only
+      // distinguish 0, exactly 1, and >1), so once a binding reaches 2 it never needs updating
+      // again, and once every tracked binding has saturated the whole ref-count walk is inert.
+      var activeRefCounts = refCount.size
+
       def updateRefCount(sym: Symbol, inc: Int) =
-        for (x <- refCount.get(sym)) refCount(sym) = x + inc
+        refCount.lookup(sym) match
+          case null =>
+          case count =>
+            val x = count.asInstanceOf[Int]
+            if x < 2 then
+              val y = if inc == 1 && x == 0 then 1 else 2
+              refCount(sym) = y
+              if y == 2 then activeRefCounts -= 1
       def updateTermRefCounts(tree: Tree) =
-        tree.typeOpt.foreachPart {
-          case ref: TermRef => updateRefCount(ref.symbol, 2) // can't be inlined, so make sure refCount is at least 2
-          case _ =>
-        }
+        if activeRefCounts != 0 then
+          tree.typeOpt.foreachPart {
+            case ref: TermRef => updateRefCount(ref.symbol, 2) // can't be inlined, so make sure refCount is at least 2
+            case _ =>
+          }
+      // Descent-guarded traverser: stops descending once `activeRefCounts == 0`.
+      // Once every tracked binding's refCount has saturated at 2, all retain/inline decisions
+      // are final and immutable, so visiting further nodes cannot change them. The guard is
+      // checked at node entry (a saturated sibling) AND after the node's own RefTree is processed
+      // (its own ref may saturate the last count) before descending into children.
+      // One reused traverser across `countRefs(tree)` + the bindings keeps allocation neutral.
+      val refCounter = new TreeTraverser {
+        def traverse(tree: Tree)(using Context): Unit =
+          if activeRefCounts != 0 then
+            tree match
+              case t: RefTree =>
+                updateRefCount(t.symbol, 1)
+                updateTermRefCounts(t)
+              case t @ (_: New | _: TypeTree) =>
+                updateTermRefCounts(t)
+              case _ =>
+            if activeRefCounts != 0 then traverseChildren(tree)
+      }
       def countRefs(tree: Tree) =
-        tree.foreachSubTree {
-          case t: RefTree =>
-            updateRefCount(t.symbol, 1)
-            updateTermRefCounts(t)
-          case t @ (_: New | _: TypeTree) =>
-            updateTermRefCounts(t)
-          case _ =>
-        }
+        if activeRefCounts != 0 then refCounter.traverse(tree)
       countRefs(tree)
-      for (binding <- bindings) countRefs(binding)
+      for (binding <- bindings if activeRefCounts != 0) countRefs(binding)
 
       def retain(boundSym: Symbol) = {
         refCount.get(boundSym) match {
