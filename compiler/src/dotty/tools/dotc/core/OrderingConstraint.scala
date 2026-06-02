@@ -331,11 +331,88 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
    *  @param ignoreBinding  if not null, a parameter that is assumed to be still uninstantiated.
    *                        This is necessary to handle replacements.
    */
-  private class Adjuster(srcParam: TypeParamRef, ignoreBinding: TypeParamRef | Null)(using Context)
+  private class Adjuster(initialSrcParam: TypeParamRef, initialIgnoreBinding: TypeParamRef | Null)(using Context)
   extends TypeTraverser, ConstraintAwareTraversal[Unit]:
 
+    private var srcParam: TypeParamRef = initialSrcParam
+    private var ignoreBinding: TypeParamRef | Null = initialIgnoreBinding
     var add: Boolean = compiletime.uninitialized
-    val seen = util.HashSet[LazyRef]()
+
+    def reset(srcParam: TypeParamRef, ignoreBinding: TypeParamRef | Null): this.type =
+      this.srcParam = srcParam
+      this.ignoreBinding = ignoreBinding
+      this
+
+    private class SeenLazyRefs:
+      private var used: Int = 0
+      private var keys: Array[LazyRef | Null] = new Array[LazyRef | Null](8)
+      private var stamps: Array[Int] = new Array[Int](8)
+      private var limit: Int = keys.length - (keys.length >> 2)
+
+      def reset(): Unit =
+        var i = 0
+        while i < keys.length do
+          keys(i) = null
+          i += 1
+        used = 0
+
+      private def index(ref: LazyRef): Int =
+        val h = System.identityHashCode(ref)
+        val i = (h ^ (h >>> 16)) * 0x85EBCA6B
+        val j = (i ^ (i >>> 13)) & 0x7FFFFFFF
+        j & (keys.length - 1)
+
+      private def insertKnown(ref: LazyRef, stamp: Int): Unit =
+        var idx = index(ref)
+        while keys(idx) != null do idx = (idx + 1) & (keys.length - 1)
+        keys(idx) = ref
+        stamps(idx) = stamp
+        used += 1
+
+      private def grow(): Unit =
+        val oldKeys = keys
+        val oldStamps = stamps
+        keys = new Array[LazyRef | Null](oldKeys.length << 1)
+        stamps = new Array[Int](keys.length)
+        limit = keys.length - (keys.length >> 2)
+        used = 0
+        var i = 0
+        while i < oldKeys.length do
+          val ref = oldKeys(i)
+          if ref != null then insertKnown(ref, oldStamps(i))
+          i += 1
+
+      def addIfNew(ref: LazyRef, generation: Int): Boolean =
+        var idx = index(ref)
+        while keys(idx) != null do
+          if keys(idx).nn eq ref then
+            if stamps(idx) == generation then return false
+            stamps(idx) = generation
+            return true
+          idx = (idx + 1) & (keys.length - 1)
+        if used >= limit then
+          grow()
+          idx = index(ref)
+          while keys(idx) != null do idx = (idx + 1) & (keys.length - 1)
+        keys(idx) = ref
+        stamps(idx) = generation
+        used += 1
+        true
+
+    private var seen: SeenLazyRefs | Null = null
+    var seenGeneration: Int = 0
+
+    def resetSeen(): Unit =
+      val seenRefs = seen
+      if seenRefs != null then seenRefs.reset()
+
+    private def seenLazyRefs: SeenLazyRefs =
+      val seenRefs = seen
+      if seenRefs == null then
+        val fresh = SeenLazyRefs()
+        seen = fresh
+        fresh
+      else seenRefs
 
     override protected def hasBounds(param: TypeParamRef) =
       (param eq ignoreBinding) || super.hasBounds(param)
@@ -355,8 +432,7 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
         else
           traverse(entry(param))
       case tp: LazyRef =>
-        if !seen.contains(tp) then
-          seen += tp
+        if seenLazyRefs.addIfNew(tp, seenGeneration) then
           traverse(tp.ref)
       case _ => traverseChildren(t)
     catch case ex: Throwable => handleRecursive("adjust", t.show, ex)
@@ -366,7 +442,15 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
    *  and the new bound `entry` for the type parameter `srcParam`.
    */
   def adjustDeps(entry: Type | Null, prevEntry: Type | Null, srcParam: TypeParamRef, ignoreBinding: TypeParamRef | Null = null)(using Context): this.type =
-    val adjuster = new Adjuster(srcParam, ignoreBinding)
+    var myAdjuster: Adjuster | Null = null
+
+    def adjuster: Adjuster =
+      val a = myAdjuster
+      if a == null then
+        val fresh = new Adjuster(srcParam, ignoreBinding)
+        myAdjuster = fresh
+        fresh
+      else a
 
     /** Adjust reverse dependencies of all type parameters referenced by `bound`
      *  @param  isLower `bound` is a lower bound
@@ -375,7 +459,10 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
     def adjustReferenced(bound: Type, isLower: Boolean, add: Boolean) =
       adjuster.variance = if isLower then 1 else -1
       adjuster.add = add
-      adjuster.seen.clear(resetToInitial = false)
+      adjuster.seenGeneration += 1
+      if adjuster.seenGeneration == 0 then
+        adjuster.resetSeen()
+        adjuster.seenGeneration = 1
       adjuster.traverse(bound)
 
     /** Use an optimized strategy to adjust dependencies to account for the delta
@@ -430,10 +517,41 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
   def adjustDeps(poly: TypeLambda, entries: Array[Type], add: Boolean)(using Context): this.type =
     // `poly.paramRefs(n)` (List.apply) is O(n); inside this counted loop it is
     // O(n^2). Use the memoized array-indexed `paramRef(n)` accessor for O(1).
-    for n <- 0 until paramCount(entries) do
-      if add
-      then adjustDeps(entries(n), NoType, poly.paramRef(n))
-      else adjustDeps(NoType, entries(n), poly.paramRef(n))
+    val limit = paramCount(entries)
+    var myAdjuster: Adjuster | Null = null
+
+    def adjuster(srcParam: TypeParamRef): Adjuster =
+      val a = myAdjuster
+      if a == null then
+        val fresh = new Adjuster(srcParam, null)
+        myAdjuster = fresh
+        fresh
+      else a.reset(srcParam, null)
+
+    def adjustReferenced(adjuster: Adjuster, bound: Type, isLower: Boolean, add: Boolean) =
+      adjuster.variance = if isLower then 1 else -1
+      adjuster.add = add
+      adjuster.seenGeneration += 1
+      if adjuster.seenGeneration == 0 then
+        adjuster.resetSeen()
+        adjuster.seenGeneration = 1
+      adjuster.traverse(bound)
+
+    def adjustBounds(bounds: TypeBounds, add: Boolean, srcParam: TypeParamRef) =
+      val a = adjuster(srcParam)
+      adjustReferenced(a, bounds.lo, isLower = true, add)
+      adjustReferenced(a, bounds.hi, isLower = false, add)
+
+    var n = 0
+    while n < limit do
+      val param = poly.paramRef(n)
+      entries(n) match
+        case bounds: TypeBounds =>
+          adjustBounds(bounds, add, param)
+          if !add then dropDeps(param)
+        case _ =>
+          dropDeps(param)
+      n += 1
     this
 
   /** Remove all reverse dependencies of `param` */
