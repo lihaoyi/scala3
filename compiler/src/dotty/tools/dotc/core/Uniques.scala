@@ -59,8 +59,10 @@ object Uniques:
         def linkedListLoop(entry: Entry[NamedType] | Null): NamedType = entry match
           case null                    => addEntryAt(bucket, newType, h, oldHead)
           case _                       =>
-            val e = entry.get
-            if e != null && (e.prefix eq prefix) && (e.designator eq designator) && (e.isTerm == isTerm) then e
+            if entry.hash == h then
+              val e = entry.get
+              if e != null && (e.prefix eq prefix) && (e.designator eq designator) && (e.isTerm == isTerm) then e
+              else linkedListLoop(entry.tail)
             else linkedListLoop(entry.tail)
 
         linkedListLoop(oldHead)
