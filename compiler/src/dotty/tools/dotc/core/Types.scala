@@ -4174,12 +4174,14 @@ object Types extends TypeUtils {
         else tp match
           case tp: TypeRef =>
             val status1 = applyPrefix(tp)
-            tp.info match { // follow type alias to avoid dependency
-              case TypeAlias(alias) if status1 == TrueDeps =>
-                combine(compute(status, alias, theAcc), FalseDeps)
-              case _ =>
-                status1
-            }
+            if status1 == TrueDeps then
+              tp.info match { // follow type alias to avoid dependency
+                case TypeAlias(alias) =>
+                  combine(compute(status, alias, theAcc), FalseDeps)
+                case _ =>
+                  status1
+              }
+            else status1
           case tp: TermRef => applyPrefix(tp)
           case tp: AppliedType => tp.fold(status, compute(_, _, theAcc))
           case tp: TypeVar if !tp.isInstantiated => combine(status, Provisional)
