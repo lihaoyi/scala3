@@ -244,10 +244,15 @@ class TreeTypeMap(
       // setting up a proper substitution abstraction with a compose operator that
       // guarantees idempotence. But this might be too inefficient in some cases.
       // We'll cross that bridge when we need to.
-      assert(!from.exists(substTo contains _))
-      assert(!to.exists(substFrom contains _))
-      assert(!from.exists(newOwners contains _))
-      assert(!to.exists(oldOwners contains _))
+      // `hasAnyEqMember` (in `Symbols`) is a typed-on-`List[Symbol]` rewrite of
+      // `from.exists(substTo contains _)`: it emits `if_acmpeq` per element instead
+      // of erasing to `Object` and routing through `BoxesRunTime.equals` / `equals2`,
+      // and avoids the 4 `Function1` eta-allocations. `Symbol` uses identity equality
+      // (no `equals` override), so this is exactly equivalent to the original `==`.
+      assert(!hasAnyEqMember(from, substTo))
+      assert(!hasAnyEqMember(to, substFrom))
+      assert(!hasAnyEqMember(from, newOwners))
+      assert(!hasAnyEqMember(to, oldOwners))
       copy(
         typeMap,
         treeMap,

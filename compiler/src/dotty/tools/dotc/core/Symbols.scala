@@ -36,8 +36,31 @@ import scala.compiletime.uninitialized
 import dotty.tools.tasty.TastyVersion
 
 import scala.reflect.ClassTag
+import scala.annotation.tailrec
 
 object Symbols extends SymUtils {
+
+  /** Does `xs` contain a `Symbol` reference-equal to `y`?
+   *
+   *  Typed concretely on `List[Symbol]` (not generic `List[A].contains`) so the
+   *  per-element comparator emits `if_acmpeq` directly, instead of erasing the
+   *  element type to `Object` and routing through `BoxesRunTime.equals` /
+   *  `equals2`. `Symbol` has no `equals` override (identity equality — see
+   *  `hashCode = id` and the lack of any `def equals` in this file), so `eq` is
+   *  exactly equivalent to `==` here.
+   */
+  @tailrec final def listContainsEq(xs: List[Symbol], y: Symbol): Boolean = xs match
+    case Nil       => false
+    case x :: rest => (x eq y) || listContainsEq(rest, y)
+
+  /** Does any element of `from` appear (reference-equal) in `in`?
+   *  Equivalent to `from.exists(in.contains(_))` but without boxing or the
+   *  per-call `Function1` eta-expansion. See `listContainsEq` for the soundness
+   *  argument (`Symbol` uses identity equality).
+   */
+  @tailrec final def hasAnyEqMember(from: List[Symbol], in: List[Symbol]): Boolean = from match
+    case Nil       => false
+    case x :: rest => listContainsEq(in, x) || hasAnyEqMember(rest, in)
 
   implicit def eqSymbol: CanEqual[Symbol, Symbol] = CanEqual.derived
 
@@ -920,7 +943,7 @@ object Symbols extends SymUtils {
   def mapSymbols(originals: List[Symbol], ttmap: TreeTypeMap, mapAlways: Boolean = false)(using Context): List[Symbol] =
     if (originals.forall(sym =>
         (ttmap.mapType(sym.info) eq sym.info) &&
-        !(ttmap.oldOwners contains sym.owner)) && !mapAlways)
+        !listContainsEq(ttmap.oldOwners, sym.owner)) && !mapAlways)
       originals
     else {
       val copies: List[Symbol] = for (original <- originals) yield
