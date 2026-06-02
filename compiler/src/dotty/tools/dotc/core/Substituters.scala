@@ -78,6 +78,14 @@ object Substituters:
     tp match {
       case tp: NamedType =>
         val sym = tp.symbol
+        if theMap != null then
+          val lookup = theMap.lookup
+          if lookup != null then
+            val replacement = lookup.get(sym)
+            if replacement != null then
+              return substSym(tp.prefix, from, to, theMap).select(replacement.nn)
+            if tp.prefix `eq` NoPrefix then return tp
+            else return tp.derivedSelect(substSym(tp.prefix, from, to, theMap))
         var fs = from
         var ts = to
         while (fs.nonEmpty) {
@@ -90,6 +98,12 @@ object Substituters:
         else tp.derivedSelect(substSym(tp.prefix, from, to, theMap))
       case tp: ThisType =>
         val sym = tp.cls
+        if theMap != null then
+          val lookup = theMap.lookup
+          if lookup != null then
+            val replacement = lookup.get(sym)
+            if replacement != null then return replacement.nn.asClass.thisType
+            return tp
         var fs = from
         var ts = to
         while (fs.nonEmpty) {
@@ -224,6 +238,20 @@ object Substituters:
   }
 
   final class SubstSymMap(from: List[Symbol], to: List[Symbol])(using Context) extends DeepTypeMap {
+    // Above this length the per-NamedType linear scan of `from` becomes
+    // measurable in deep inlining; cache an identity-keyed lookup once.
+    private[Substituters] val lookup: java.util.IdentityHashMap[Symbol, Symbol] | Null =
+      if from.lengthCompare(4) >= 0 then
+        val m = new java.util.IdentityHashMap[Symbol, Symbol]
+        var fs = from
+        var ts = to
+        while fs.nonEmpty && ts.nonEmpty do
+          // first-occurrence wins; matches the linear-scan semantics
+          if !m.containsKey(fs.head) then m.put(fs.head, ts.head)
+          fs = fs.tail
+          ts = ts.tail
+        m
+      else null
     def apply(tp: Type): Type = substSym(tp, from, to, this)(using mapCtx)
     def inverse = SubstSymMap(to, from) // implicitly requires that `to` contains no duplicates.
   }
