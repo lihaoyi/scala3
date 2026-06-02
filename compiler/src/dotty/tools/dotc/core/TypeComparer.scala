@@ -1164,6 +1164,7 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     |*  does not conform to  dotty.tools.dotc.util.Property.Key[Typer.this.Deriver & Namer.this.Deriver]
      */
     def isSubPrefix(pre1: Type, pre2: Type): Boolean =
+      if pre1 eq pre2 then return true
       def samePkg(sym1: Symbol, sym2: Symbol) =
            sym2.is(Package) && sym1.isPackageObject && sym1.owner == sym2.moduleClass
         || sym1.is(Package) && sym2.isPackageObject && sym2.owner == sym1.moduleClass
@@ -1346,6 +1347,16 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
             case tycon1: TypeRef =>
               tycon2 match {
                 case tycon2: TypeRef =>
+                  // Fast path: when both tycons are the SAME class type constructor,
+                  // injectivity lets us compare arguments directly. This skips forcing
+                  // both symbols, the GADT-bounds closures, and the isSubPrefix call.
+                  // Sound because: a class symbol is its own injective tycon, so the
+                  // prefix is trivially a sub-prefix; touchedGADTs stays false, so the
+                  // (omitted) recordGadtUsageIf(touchedGADTs) would be a no-op; and no
+                  // alias-type dealiasing applies (classes are not alias types).
+                  if (tycon1 eq tycon2) && tycon1.symbol.isClass then
+                    return isSubArgs(args1, args2, tp1, tparams)
+
                   val tycon1sym = tycon1.symbol
                   val tycon2sym = tycon2.symbol
 
