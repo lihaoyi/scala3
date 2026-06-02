@@ -81,7 +81,7 @@ object Uniques:
     private val appliedHashSeed = hashSeed
 
     override def hash(x: AppliedType): Int = x.hash
-    override protected def nextCapacity(currentCapacity: Int): Int = currentCapacity * 4
+    override protected def nextCapacity(currentCapacity: Int): Int = currentCapacity * 8
 
     def enterIfNew(tycon: Type, args: List[Type]): AppliedType =
       // Compute the structural type hash and the args identity hash in a single
