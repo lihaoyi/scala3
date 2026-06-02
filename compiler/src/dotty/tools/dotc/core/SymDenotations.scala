@@ -58,6 +58,11 @@ object SymDenotations {
     private var myAnnotations: List[Annotation] = Nil
     private var myParamss: List[List[Symbol]] = Nil
 
+    /** Invalidate caches whose result depends on `isAbsent` / base-class data.
+     *  Overridden in ClassDenotation to reset the per-runId derivesFrom cache.
+     */
+    protected def invalidateAbsentSensitiveCaches(): Unit = ()
+
     /** The owner of the symbol; overridden in NoDenotation */
     def owner: Symbol = maybeOwner
 
@@ -609,6 +614,7 @@ object SymDenotations {
         assert(myInfo.isInstanceOf[ModuleCompleter | SymbolLoader],
           s"Illegal call to `markAbsent()` while completing $this using completer $myInfo")
       myInfo = NoType
+      invalidateAbsentSensitiveCaches()
     }
 
     /** Is symbol known to not exist?
@@ -1882,6 +1888,24 @@ object SymDenotations {
     private var baseDataCache: BaseData = BaseData.None
     private var memberNamesCache: MemberNames = MemberNames.None
 
+    // 2-slot RunId-keyed cache for derivesFrom. derivesFrom is called very
+    // frequently (subtyping, isAbsent/toPrefix, base-type probing) and each
+    // miss scans baseClassSet via BaseClassSet.contains. Two slots cover the
+    // common alternating-base query pattern while keeping the miss-side
+    // eq-scan tiny (the 4-slot variant cost more than it saved). Both slots
+    // are reset whenever isAbsent or the base-class data can change
+    // (markAbsent / info_=), see invalidateAbsentSensitiveCaches.
+    private var myDerivesFromRunId0: RunId = NoRunId
+    private var myDerivesFromBase0: Symbol = NoSymbol
+    private var myDerivesFromResult0: Boolean = false
+    private var myDerivesFromRunId1: RunId = NoRunId
+    private var myDerivesFromBase1: Symbol = NoSymbol
+    private var myDerivesFromResult1: Boolean = false
+
+    override protected def invalidateAbsentSensitiveCaches(): Unit =
+      myDerivesFromRunId0 = NoRunId
+      myDerivesFromRunId1 = NoRunId
+
     private def memberCache(using Context): EqHashMap[Name, PreDenotation] = {
       if (myMemberCachePeriod != ctx.period) {
         myMemberCache = EqHashMap()
@@ -1977,6 +2001,7 @@ object SymDenotations {
       if (changedClassParents(infoOrCompleter, tp, completersMatter = true))
         invalidateBaseDataCache()
       invalidateMemberNamesCache()
+      invalidateAbsentSensitiveCaches()
       myTypeParams = null // changing the info might change decls, and with it typeParams
       super.info_=(tp)
     }
@@ -2092,9 +2117,24 @@ object SymDenotations {
     }
 
     final override def derivesFrom(base: Symbol)(using Context): Boolean =
-      !isAbsent()
-      && base.isClass
-      && ((symbol eq base) || baseClassSet.contains(base))
+      val rid = ctx.runId
+      if myDerivesFromRunId0 == rid && (myDerivesFromBase0 eq base) then
+        myDerivesFromResult0
+      else if myDerivesFromRunId1 == rid && (myDerivesFromBase1 eq base) then
+        myDerivesFromResult1
+      else
+        val res =
+          !isAbsent()
+          && base.isClass
+          && ((symbol eq base) || baseClassSet.contains(base))
+        // FIFO size 2: evict slot 0 into slot 1, install new entry into slot 0.
+        myDerivesFromRunId1 = myDerivesFromRunId0
+        myDerivesFromBase1 = myDerivesFromBase0
+        myDerivesFromResult1 = myDerivesFromResult0
+        myDerivesFromRunId0 = rid
+        myDerivesFromBase0 = base
+        myDerivesFromResult0 = res
+        res
 
     final override def isSubClass(base: Symbol)(using Context): Boolean =
       derivesFrom(base)
