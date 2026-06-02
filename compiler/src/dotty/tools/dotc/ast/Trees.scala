@@ -1727,7 +1727,19 @@ object Trees {
         fold(x, trees)
 
       def foldOver(x: X, tree: Tree)(using Context): X =
-        if ((tree.source `ne` ctx.source) && tree.source.exists)
+        // Leaf-tree shortcut. For the childless Ident/Literal/This/TypeTree
+        // nodes the match body is just `x` (no children to fold), so when the
+        // source-switch branch would not have fired (tree.source eq ctx.source,
+        // or no source) we can return `x` directly and skip the Stats.record +
+        // typeswitch. Syntactic isInstanceOf (childless kinds), mirroring the
+        // shipped MegaPhase.transformTree leaf shortcut.
+        if ((tree.isInstanceOf[Ident @unchecked]
+              || tree.isInstanceOf[Literal @unchecked]
+              || tree.isInstanceOf[This @unchecked]
+              || tree.isInstanceOf[TypeTree @unchecked])
+            && ((tree.source `eq` ctx.source) || !tree.source.exists))
+          x
+        else if ((tree.source `ne` ctx.source) && tree.source.exists)
           foldOver(x, tree)(using ctx.withSource(tree.source))
         else {
           Stats.record(s"TreeAccumulator.foldOver/$getClass")

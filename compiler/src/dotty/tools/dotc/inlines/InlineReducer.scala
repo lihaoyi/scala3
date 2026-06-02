@@ -175,16 +175,30 @@ class InlineReducer(inliner: Inliner)(using Context):
 
     val unusable: util.EqHashSet[Symbol] = util.EqHashSet()
 
+    // Whether the scrutinee references any erased symbol. The generated case-
+    // binding RHSs are all derived from the scrutinee (a scrutinee reference or
+    // a projection thereof), so when the scrutinee carries no erased reference
+    // none of those RHSs can either, and the per-binding `adjustErased` subtree
+    // walk is provably dead. Computed once here and reused for the scrutinee
+    // binding below. Inferred implicit evidence is external to the scrutinee, so
+    // that path always walks (see `searchImplicit`).
+    val scrutineeHasErased: Boolean =
+      !scrutinee.isEmpty && scrutinee.existsSubTree(_.symbol.isErased)
+
     /** Adjust internaly generated value definitions;
      *   - If the RHS refers to an erased symbol, mark the val as erased
      *   - If the RHS refers to an unusable symbol, mark the val as unusable
+     *
+     *  `mayHaveErased` is a conservative gate: when false the RHS provably
+     *  contains no erased symbol and the subtree walk is skipped.
      */
-    def adjustErased(sym: TermSymbol, rhs: Tree): Unit =
-      rhs.foreachSubTree:
-        case id: Ident if id.symbol.isErased =>
-          sym.setFlag(Erased)
-          if unusable.contains(id.symbol) then unusable += sym
-        case _ =>
+    def adjustErased(sym: TermSymbol, rhs: Tree, mayHaveErased: Boolean = true): Unit =
+      if mayHaveErased then
+        rhs.foreachSubTree:
+          case id: Ident if id.symbol.isErased =>
+            sym.setFlag(Erased)
+            if unusable.contains(id.symbol) then unusable += sym
+          case _ =>
 
     /** Try to match pattern `pat` against scrutinee reference `scrut`. If successful add
      *  bindings for variables bound in this pattern to `caseBindingMap`.
@@ -198,10 +212,10 @@ class InlineReducer(inliner: Inliner)(using Context):
       /** Create a binding of a pattern bound variable with matching part of
        *  scrutinee as RHS and type that corresponds to RHS.
        */
-      def newTermBinding(sym: TermSymbol, rhs: Tree): Unit =
+      def newTermBinding(sym: TermSymbol, rhs: Tree, mayHaveErased: Boolean = true): Unit =
         val copied = sym.copy(info = rhs.tpe.widenInlineScrutinee, coord = sym.coord,
           flags = sym.flags &~ Case).asTerm
-        adjustErased(copied, rhs)
+        adjustErased(copied, rhs, mayHaveErased)
         caseBindingMap += ((sym, ValDef(copied, constToLiteral(rhs)).withSpan(sym.span)))
 
       def newTypeBinding(sym: TypeSymbol, alias: Type): Unit = {
@@ -298,7 +312,7 @@ class InlineReducer(inliner: Inliner)(using Context):
           }
         case pat @ Bind(name: TermName, body) =>
           reducePattern(caseBindingMap, scrut, body) && {
-            if (name != nme.WILDCARD) newTermBinding(pat.symbol.asTerm, ref(scrut))
+            if (name != nme.WILDCARD) newTermBinding(pat.symbol.asTerm, ref(scrut), scrutineeHasErased)
             true
           }
         case Ident(nme.WILDCARD) =>
@@ -321,7 +335,7 @@ class InlineReducer(inliner: Inliner)(using Context):
                 case (Nil, Nil) => true
                 case (pat :: pats1, selector :: selectors1) =>
                   val elem = newSym(InlineBinderName.fresh(), Synthetic, selector.tpe.widenInlineScrutinee).asTerm
-                  adjustErased(elem, selector)
+                  adjustErased(elem, selector, scrutineeHasErased)
                   val rhs = constToLiteral(selector)
                   elem.defTree = rhs
                   caseBindingMap += ((NoSymbol, ValDef(elem, rhs).withSpan(elem.span)))
@@ -371,7 +385,7 @@ class InlineReducer(inliner: Inliner)(using Context):
         // to unusable symbols.
         // Note that compiletime.erasedValue is treated as erased but not pure, so scrutinees
         // containing references to it becomes unusable.
-        if scrutinee.existsSubTree(_.symbol.isErased) then
+        if scrutineeHasErased then
           scrutineeSym.setFlag(Erased)
           if !tpd.isPureExpr(scrutinee) then unusable += scrutineeSym
         val binding = normalizeBinding(ValDef(scrutineeSym, scrutinee))
