@@ -147,7 +147,7 @@ object Trees {
     def denot(using Context): Denotation = NoDenotation
 
     /** Shorthand for `denot.symbol`. */
-    final def symbol(using Context): Symbol = denot.symbol
+    def symbol(using Context): Symbol = denot.symbol
 
     /** Does this tree represent a type? */
     def isType: Boolean = false
@@ -257,10 +257,17 @@ object Trees {
   /** Tree's denotation can be derived from its type */
   abstract class DenotingTree[+T <: Untyped](implicit @constructorOnly src: SourceFile) extends Tree[T] {
     type ThisTree[+T <: Untyped] <: DenotingTree[T]
-    override def denot(using Context): Denotation = typeOpt.stripped match
+    // Fast path: inline the common NamedType / ThisType cases of typeOpt
+    // so JIT keeps the body inlineable, avoiding the megamorphic virtual
+    // `stripped` dispatch on every denot read.
+    override def denot(using Context): Denotation = typeOpt match
       case tpe: NamedType => tpe.denot
       case tpe: ThisType => tpe.cls.denot
-      case _ => NoDenotation
+      case NoType => NoDenotation
+      case tpe => tpe.stripped match
+        case tpe: NamedType => tpe.denot
+        case tpe: ThisType => tpe.cls.denot
+        case _ => NoDenotation
   }
 
   /** Tree's denot/isType/isTerm properties come from a subtree
@@ -451,12 +458,34 @@ object Trees {
     extends RefTree[T] {
     type ThisTree[+T <: Untyped] = Select[T]
 
+    // Inline the DenotingTree.denot common path so JIT keeps Select.denot
+    // within its inline budget. ConstantType + stripped fallbacks live in denotSlowPath.
     override def denot(using Context): Denotation = typeOpt match
+      case tpe: NamedType => tpe.denot
+      case tpe: ThisType => tpe.cls.denot
+      case NoType => NoDenotation
+      case _ => denotSlowPath
+
+    private def denotSlowPath(using Context): Denotation = typeOpt match
       case ConstantType(_) if ConstFold.foldedUnops.contains(name) =>
         // Recover the denotation of a constant-folded selection
         qualifier.typeOpt.member(name).atSignature(Signature.NotAMethod, name)
-      case _ =>
-        super.denot
+      case tpe => tpe.stripped match
+        case tpe: NamedType => tpe.denot
+        case tpe: ThisType => tpe.cls.denot
+        case _ => NoDenotation
+
+    // Symbol-side fast path: when the cached NamedType denotation is valid for the
+    // current period (the same gate `NamedType.denot` uses, looser than the strict
+    // `checkedPeriod == ctx.period` gate in `NamedType.symbol`), skip the full
+    // denot-then-`.symbol` indirection and read the cached symbol directly.
+    // Falls back bit-for-bit to `denot.symbol` on a cache miss or non-NamedType
+    // type, preserving the ConstantType / stripped fallbacks in `denot`.
+    override def symbol(using Context): Symbol = typeOpt match
+      case tpe: NamedType =>
+        val s = tpe.cachedSymbolOrNull
+        if s != null then s else denot.symbol
+      case _ => denot.symbol
 
     def nameSpan(using Context): Span =
       if span.exists then
@@ -491,6 +520,18 @@ object Trees {
         case _ =>
           super.denot
       }
+    // Symbol-side fast path: avoid the `asSeenFrom` allocation and full denot path
+    // for the common case where we only need the symbol. For Module TermRefs we
+    // return the moduleClass directly (matching the denot.symbol above); for
+    // ThisType / non-module NamedType we use the cached-symbol fast path.
+    override def symbol(using Context): Symbol = typeOpt match
+      case tpe: ThisType => tpe.cls
+      case tpe: NamedType =>
+        val s = tpe.cachedSymbolOrNull
+        if s == null then denot.symbol
+        else if s.is(Module) then s.moduleClass
+        else s
+      case _ => denot.symbol
   }
 
   /** C.super[mix], where qual = C.this */
