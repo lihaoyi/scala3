@@ -53,6 +53,20 @@ class TreeTypeMap(
   /** If `sym` is one of `oldOwners`, replace by corresponding symbol in `newOwners` */
   def mapOwner(sym: Symbol): Symbol = sym.subst(oldOwners, newOwners)
 
+  // `mapOwnerThis` only substitutes ThisType prefixes whose `cls` matches a
+  // ClassSymbol in `oldOwners`; entries that aren't ClassSymbols are stepped
+  // over without effect (see `mapPrefix` below). When `oldOwners` contains no
+  // ClassSymbols at all (e.g. Inliner's initial `inlinedMethod :: Nil`), the
+  // whole `mapOwnerThis` TypeMap walk is a no-op on every NamedType visited —
+  // precompute the gate once per TreeTypeMap.
+  private val hasOwnerClass: Boolean =
+    var xs = oldOwners
+    var found = false
+    while !found && (xs ne Nil) do
+      if xs.head.isClass then found = true
+      xs = xs.tail
+    found
+
   /** Replace occurrences of `This(oldOwner)` in some prefix of a type
    *  by the corresponding `This(newOwner)`.
    */
@@ -89,8 +103,10 @@ class TreeTypeMap(
   def mapType(tp: Type): Type =
     // Cache only when we actually do non-trivial work (substSym walk and/or
     // ownerThis walk). Pure `typeMap(tp)` calls are usually identity and the
-    // user-supplied typeMap may have its own caching.
-    val cacheable = substFrom.nonEmpty || oldOwners.nonEmpty
+    // user-supplied typeMap may have its own caching. `hasOwnerClass` (not
+    // `oldOwners.nonEmpty`) is the gate for the ownerThis walk: with no class
+    // owner that walk is the identity, so such maps are not worth caching.
+    val cacheable = substFrom.nonEmpty || hasOwnerClass
     if cacheable then
       var cache = myMapTypeCache
       if cache == null then
@@ -107,7 +123,12 @@ class TreeTypeMap(
   private def computeMapType(tp: Type): Type =
     val tp1 = typeMap(tp)
     val tp2 = if substFrom.isEmpty then tp1 else substMap(tp1)
-    if oldOwners.isEmpty then tp2 else mapOwnerThis(tp2)
+    // Fast path: when no ClassSymbol appears in `oldOwners`, `mapOwnerThis` is
+    // the identity (its `mapPrefix` only substitutes for ClassSymbol entries),
+    // so skip the whole TypeMap walk. This catches Inliner's common
+    // `inlinedMethod :: Nil` owners where `oldOwners` is non-empty but holds no
+    // class.
+    if !hasOwnerClass then tp2 else mapOwnerThis(tp2)
   end computeMapType
 
   private def updateDecls(prevStats: List[Tree], newStats: List[Tree]): Unit =
