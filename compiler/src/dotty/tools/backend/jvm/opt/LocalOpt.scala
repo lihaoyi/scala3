@@ -1033,29 +1033,39 @@ object LocalOptImpls {
    * lexically preceding label declaration.
    */
   def removeEmptyLineNumbers(method: MethodNode): Boolean = {
-    @tailrec
-    def isEmpty(node: AbstractInsnNode): Boolean = node.getNext match {
-      case null => true
-      case _: LineNumberNode => true
-      case n if n.getOpcode >= 0 => false
-      case n => isEmpty(n)
+    var previousLabel: LabelNode | Null = null
+    var pendingLine: LineNumberNode | Null = null
+    var pendingLineLabel: LabelNode | Null = null
+    var lineNumbersRemoved = false
+
+    def removePendingLine(line: LineNumberNode): Unit = {
+      assert(line.start == pendingLineLabel)
+      method.instructions.remove(line)
+      pendingLine = null
+      pendingLineLabel = null
+      lineNumbersRemoved = true
     }
 
-    val initialSize = method.instructions.size
-    val iterator = method.instructions.iterator
-    var previousLabel: LabelNode | Null = null
-    while (iterator.hasNext) {
-      iterator.next match {
+    var node = method.instructions.getFirst
+    while (node != null) {
+      val next = node.getNext
+      node match {
         case label: LabelNode =>
           BackendUtils.clearLabelReachable(label)
           previousLabel = label
-        case line: LineNumberNode if isEmpty(line) =>
-          assert(line.start == previousLabel)
-          iterator.remove()
+        case line: LineNumberNode =>
+          if (pendingLine != null) removePendingLine(pendingLine.nn)
+          pendingLine = line
+          pendingLineLabel = previousLabel
+        case n if n.getOpcode >= 0 =>
+          pendingLine = null
+          pendingLineLabel = null
         case _ =>
       }
+      node = next
     }
-    method.instructions.size != initialSize
+    if (pendingLine != null) removePendingLine(pendingLine.nn)
+    lineNumbersRemoved
   }
 
   /**
