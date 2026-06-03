@@ -69,6 +69,31 @@ class TastyReader(val bytes: Array[Byte], start: Int, end: Int, val base: Int = 
     l.toInt
   }
 
+  @inline private def readNatDirect(): Int = {
+    val ogBp = bp
+    var b = bytes(bp) & 0xff
+    bp += 1
+    val x = b & 0x7f
+    if (b >= 0x80) x
+    else {
+      var y = x.toLong
+      while ({
+        b = bytes(bp) & 0xff
+        y = (y << 7) | (b & 0x7f)
+        bp += 1
+        b < 0x80
+      }) ()
+      if (bp - ogBp > 9) {
+        throw new UnpickleException(s"Expected a long nat, but read too many bytes (${bp - ogBp})")
+      }
+      assert(y >= 0, "We read <= 9 groups of 7 bits so x must be nonnegative here")
+      if (y > Int.MaxValue) {
+        throw new UnpickleException(s"Expected a 31-bit nat, got: $y")
+      }
+      y.toInt
+    }
+  }
+
   /** Read a 32-bit integer number in 2's complement big endian format, base 128, each digit being a byte.
    *  All bytes except the last one have bit 0x80 unset.
    */
@@ -138,15 +163,18 @@ class TastyReader(val bytes: Array[Byte], start: Int, end: Int, val base: Int = 
   }
 
   /** Read a natural number and return as a NameRef */
-  def readNameRef(): NameRef = NameRef(readNat())
+  def readNameRef(): NameRef = NameRef(readNatDirect())
 
   /** Read a natural number and return as an address */
-  def readAddr(): Addr = Addr(readNat())
+  def readAddr(): Addr = Addr(readNatDirect())
 
   /** Read a length number and return the absolute end address implied by it,
    *  given as <address following length field> + <length-value-read>.
    */
-  def readEnd(): Addr = addr(readNat() + bp)
+  def readEnd(): Addr = {
+    val end = readNatDirect() + bp
+    Addr(end - base)
+  }
 
   /** Set read position to the one pointed to by `addr` */
   def goto(addr: Addr): Unit =
