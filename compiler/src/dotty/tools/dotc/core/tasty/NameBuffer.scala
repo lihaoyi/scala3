@@ -17,6 +17,14 @@ class NameBuffer extends TastyBuffer(10000) {
   import NameBuffer.*
 
   private val nameRefs = new mutable.LinkedHashMap[Name, NameRef]
+  private val stringLiteralRefs = new mutable.HashMap[String, NameRef]
+  private val nameEntries = new mutable.ArrayBuffer[Name | String]
+
+  private def addEntry(entry: Name | String): NameRef = {
+    val ref = NameRef(nameEntries.size)
+    nameEntries += entry
+    ref
+  }
 
   def nameIndex(name: Name): NameRef = {
     val name1 = name.toTermName
@@ -43,11 +51,19 @@ class NameBuffer extends TastyBuffer(10000) {
             nameIndex(original)
           case _ =>
         }
-        val ref = NameRef(nameRefs.size)
+        val ref = addEntry(name1)
         nameRefs(name1) = ref
         ref
     }
   }
+
+  def stringLiteralIndex(value: String): NameRef =
+    stringLiteralRefs.get(value) match
+      case Some(ref) => ref
+      case None =>
+        val ref = addEntry(value)
+        stringLiteralRefs(value) = ref
+        ref
 
   def utf8Index(value: String): NameRef =
     import Decorators.toTermName
@@ -75,6 +91,15 @@ class NameBuffer extends TastyBuffer(10000) {
         -paramSig
     }
     writeInt(encodedValue)
+  }
+
+  private def pickleUtf8String(value: String): Unit = {
+    writeByte(NameTags.UTF8)
+    val bytes =
+      if value.isEmpty then new Array[Byte](0)
+      else Codec.toUTF8(value)
+    writeNat(bytes.length)
+    writeBytes(bytes, bytes.length)
   }
 
   def pickleNameContents(name: Name): Unit = {
@@ -118,11 +143,17 @@ class NameBuffer extends TastyBuffer(10000) {
 
   override def assemble(): Unit = {
     var i = 0
-    for (name, ref) <- nameRefs do
-      val ref = nameRefs(name)
-      assert(ref.index == i)
+    for entry <- nameEntries do
+      entry match
+        case name: Name =>
+          assert(nameRefs(name).index == i)
+          pickleNameContents(name)
+        case value: String =>
+          assert(stringLiteralRefs(value).index == i)
+          pickleUtf8String(value)
       i += 1
-      pickleNameContents(name)
+    assert(i == nameEntries.size)
+    assert(nameRefs.size + stringLiteralRefs.size == nameEntries.size)
   }
 }
 
