@@ -276,7 +276,11 @@ abstract class NestedClassesCollector[T](nestedOnly: Boolean) extends GenericSig
 
   // we are only interested in the class references in the descriptor, so we can skip over
   // primitives and the brackets of array descriptors
-  def visitDescriptor(desc: String): Unit = (desc.charAt(0): @switch) match {
+  def visitDescriptor(desc: String): Unit = {
+    val firstChar = desc.charAt(0)
+    if (desc.indexOf('$') < 0) return
+
+    (firstChar: @switch) match {
     case '(' =>
       var i = 1
       while (i < desc.length) {
@@ -298,6 +302,7 @@ abstract class NestedClassesCollector[T](nestedOnly: Boolean) extends GenericSig
       visitInternalNameOrArrayReference(desc)
 
     case _ => // skip over primitive types
+    }
   }
 
   def visitConstant(const: AnyRef): Unit = const match {
