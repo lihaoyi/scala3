@@ -55,6 +55,10 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     errorNotes = Nil
     undoLog.clear()
     frozenConstraint = false
+    lastTypeVarInstanceVar = null
+    lastTypeVarInstanceConstraint = null
+    lastTypeVarInstanceOrigin = null
+    lastTypeVarInstance = NoType
     atomCacheActive = false
     if Config.checkTypeComparerReset then checkReset()
 
@@ -116,6 +120,10 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
     assert(approx == ApproxState.Fresh)
     assert(leftRoot == null)
     assert(frozenGadt == false)
+    assert(lastTypeVarInstanceVar == null)
+    assert(lastTypeVarInstanceConstraint == null)
+    assert(lastTypeVarInstanceOrigin == null)
+    assert(lastTypeVarInstance eq NoType)
     assert(atomCacheActive == false)
 
   /** Record that GADT bounds of `sym` were used in a subtype check.
@@ -136,7 +144,24 @@ class TypeComparer(@constructorOnly initctx: Context) extends ConstraintHandling
   protected def gadtBounds(sym: Symbol)(using Context) = ctx.gadt.bounds(sym)
   protected def gadtAddBound(sym: Symbol, b: Type, isUpper: Boolean): Boolean = ctx.gadtState.addBound(sym, b, isUpper)
 
-  protected def typeVarInstance(tvar: TypeVar)(using Context): Type = tvar.underlying
+  private var lastTypeVarInstanceVar: TypeVar | Null = null
+  private var lastTypeVarInstanceConstraint: Constraint | Null = null
+  private var lastTypeVarInstanceOrigin: TypeParamRef | Null = null
+  private var lastTypeVarInstance: Type = NoType
+
+  protected def typeVarInstance(tvar: TypeVar)(using Context): Type =
+    val constr = constraint
+    val origin = tvar.origin
+    if (tvar eq lastTypeVarInstanceVar) && (constr eq lastTypeVarInstanceConstraint) && (origin eq lastTypeVarInstanceOrigin) then
+      lastTypeVarInstance
+    else
+      val inst = tvar.underlying
+      if !tvar.isPermanentlyInstantiated then
+        lastTypeVarInstanceVar = tvar
+        lastTypeVarInstanceConstraint = constr
+        lastTypeVarInstanceOrigin = origin
+        lastTypeVarInstance = inst
+      inst
 
   // Subtype testing `<:<`
 
