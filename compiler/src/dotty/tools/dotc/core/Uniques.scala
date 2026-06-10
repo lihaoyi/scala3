@@ -5,8 +5,8 @@ import Types.*, Contexts.*, util.Stats.*, Hashable.*, Names.*
 import config.Config
 import Symbols.Symbol
 import Decorators.*
-import util.{WeakHashSet, StrongHashSet, Stats}
-import WeakHashSet.Entry
+import util.{StrongHashSet, Stats}
+import StrongHashSet.Entry
 import scala.annotation.tailrec
 import scala.util.hashing.{MurmurHash3 => hashing}
 
@@ -86,7 +86,15 @@ object Uniques:
 
   end NamedTypeUniques
 
-  final class AppliedUniques extends WeakHashSet[AppliedType](1) with Hashable:
+  /** Strong paged hash-consing table for AppliedTypes, cleared at every run
+   *  boundary (ContextBase.reset()) like the tables above. Entries are held
+   *  strongly, so there is no ReferenceQueue to poll per operation, no
+   *  per-candidate `Reference.get` dereference, and no stale-entry unlinking;
+   *  occupancy bits are only set at insert/split time and only cleared when a
+   *  split leaves a bucket empty. Growth stays incremental (one-bucket linear
+   *  hashing splits), so no pre-sizing is needed.
+   */
+  final class AppliedUniques extends StrongHashSet[AppliedType](1) with Hashable:
     private type AppliedEntry = Entry[AppliedType]
     private type BucketPage = Array[AppliedEntry | Null]
     private type OccupancyPage = Array[Long]
@@ -165,26 +173,6 @@ object Uniques:
         case _ => prevEntry.tail = entry.tail
       count -= 1
 
-    override protected def removeStaleEntries(): Unit =
-      def poll(): AppliedEntry | Null = queue.poll().asInstanceOf
-
-      @tailrec
-      def queueLoop(): Unit =
-        val stale = poll()
-        if stale != null then
-          val bucket = bucketIndex(stale.hash)
-
-          @tailrec
-          def linkedListLoop(prevEntry: AppliedEntry | Null, entry: AppliedEntry | Null): Unit =
-            if entry != null then
-              if stale eq entry then removePaged(bucket, prevEntry, entry)
-              else linkedListLoop(entry, entry.tail)
-
-          linkedListLoop(null, bucketHead(bucket))
-          queueLoop()
-
-      queueLoop()
-
     private def splitOneBucket(): Unit =
       Stats.record(statsItem("resize"))
       val oldBucket = splitBucket
@@ -262,7 +250,7 @@ object Uniques:
 
     private def addPagedEntryAt(bucket: Int, elem: AppliedType, elemHash: Int, oldHead: AppliedEntry | Null): AppliedType =
       Stats.record(statsItem("addEntryAt"))
-      bucketHead_=(bucket, new Entry(elem, elemHash, oldHead, queue))
+      bucketHead_=(bucket, new Entry(elem, elemHash, oldHead))
       if oldHead == null then markBucketOccupied(bucket)
       count += 1
       while count > pagedThreshold do
@@ -270,10 +258,9 @@ object Uniques:
       elem
 
     override def lookup(elem: AppliedType): AppliedType | Null = (elem: AppliedType | Null) match
-      case null => throw new NullPointerException("WeakHashSet cannot hold nulls")
+      case null => throw new NullPointerException("StrongHashSet cannot hold nulls")
       case _ =>
         Stats.record(statsItem("lookup"))
-        removeStaleEntries()
         val h = hash(elem)
         val bucket = bucketIndex(h)
 
@@ -281,19 +268,15 @@ object Uniques:
         def linkedListLoop(entry: AppliedEntry | Null): AppliedType | Null = entry match
           case null => null
           case _ =>
-            if entry.hash == h then
-              val entryElem = entry.get
-              if entryElem != null && isEqual(elem, entryElem) then entryElem
-              else linkedListLoop(entry.tail)
+            if entry.hash == h && isEqual(elem, entry.elem) then entry.elem
             else linkedListLoop(entry.tail)
 
         linkedListLoop(bucketHead(bucket))
 
     override def put(elem: AppliedType): AppliedType = (elem: AppliedType | Null) match
-      case null => throw new NullPointerException("WeakHashSet cannot hold nulls")
+      case null => throw new NullPointerException("StrongHashSet cannot hold nulls")
       case _ =>
         Stats.record(statsItem("put"))
-        removeStaleEntries()
         val h = hash(elem)
         val bucket = bucketIndex(h)
         val oldHead = bucketHead(bucket)
@@ -302,10 +285,7 @@ object Uniques:
         def linkedListLoop(entry: AppliedEntry | Null): AppliedType = entry match
           case null => addPagedEntryAt(bucket, elem, h, oldHead)
           case _ =>
-            if entry.hash == h then
-              val entryElem = entry.get
-              if entryElem != null && isEqual(elem, entryElem) then entryElem
-              else linkedListLoop(entry.tail)
+            if entry.hash == h && isEqual(elem, entry.elem) then entry.elem
             else linkedListLoop(entry.tail)
 
         linkedListLoop(oldHead)
@@ -314,26 +294,19 @@ object Uniques:
       case null =>
       case _ =>
         Stats.record(statsItem("-="))
-        removeStaleEntries()
         val h = hash(elem)
         val bucket = bucketIndex(h)
 
         @tailrec
         def linkedListLoop(prevEntry: AppliedEntry | Null, entry: AppliedEntry | Null): Unit =
           if entry != null then
-            if entry.hash == h then
-              val entryElem = entry.get
-              if entryElem != null && isEqual(elem, entryElem) then removePaged(bucket, prevEntry, entry)
-              else linkedListLoop(entry, entry.tail)
+            if entry.hash == h && isEqual(elem, entry.elem) then removePaged(bucket, prevEntry, entry)
             else linkedListLoop(entry, entry.tail)
 
         linkedListLoop(null, bucketHead(bucket))
 
     override def clear(resetToInitial: Boolean): Unit =
-      @tailrec def drainQueue(): Unit = if queue.poll() != null then drainQueue()
-
-      if count == 0 then drainQueue()
-      else
+      if count != 0 then
         if resetToInitial then
           pages = new Array[BucketPage | Null](InitialBuckets >>> PageBits)
           occupancyPages = new Array[OccupancyPage | Null](InitialBuckets >>> PageBits)
@@ -345,43 +318,106 @@ object Uniques:
           pages = new Array[BucketPage | Null](pages.length)
           occupancyPages = new Array[OccupancyPage | Null](occupancyPages.length)
         count = 0
-        drainQueue()
 
-    override def size: Int =
-      removeStaleEntries()
-      count
+    override def size: Int = count
 
     override def iterator: Iterator[AppliedType] =
-      removeStaleEntries()
-
       new collection.AbstractIterator[AppliedType]:
         private var currentBucket = activeBuckets
         private var entry: AppliedEntry | Null = null
-        private var lookaheadElement: AppliedType | Null = null
 
-        @tailrec
         def hasNext: Boolean =
           while entry == null && currentBucket > 0 do
             currentBucket -= 1
             entry = bucketHead(currentBucket)
-
-          val e = entry
-          if e == null then false
-          else
-            lookaheadElement = e.get
-            if lookaheadElement == null then
-              entry = e.tail
-              hasNext
-            else true
+          entry != null
 
         def next(): AppliedType =
-          if lookaheadElement == null then
+          val e = entry
+          if e == null then
             throw new IndexOutOfBoundsException("next on an empty iterator")
           else
-            val result = lookaheadElement.nn
-            lookaheadElement = null
-            entry = entry.nn.tail
-            result
+            entry = e.tail
+            e.elem
+
+    private inline def sameArgs1(args: List[Type], arg: Type): Boolean =
+      !args.isEmpty && (args.head eq arg) && args.tail.isEmpty
+
+    private inline def sameArgs2(args: List[Type], arg1: Type, arg2: Type): Boolean =
+      if args.isEmpty || (args.head ne arg1) then false
+      else
+        val rest = args.tail
+        !rest.isEmpty && (rest.head eq arg2) && rest.tail.isEmpty
+
+    def enterIfNew(tycon: Type, arg: Type): AppliedType =
+      val argsEqHash = 31 + System.identityHashCode(arg)
+      val tyconHash = tycon.hash
+      val h =
+        if tyconHash == NotCached then NotCached
+        else
+          val argHash = arg.hash
+          if argHash == NotCached then NotCached
+          else finishHash(hashing.mix(hashing.mix(appliedHashSeed, tyconHash), argHash), 2)
+      def newType(argsEqHash: Int) = new CachedAppliedType(tycon, arg :: Nil, h, argsEqHash)
+      if monitored then recordCaching(h, classOf[CachedAppliedType])
+      if h == NotCached then newType(argsEqHash)
+      else
+        // Inlined from StrongHashSet#put
+        Stats.record(statsItem("put"))
+        val bucket = bucketIndex(h)
+        val oldHead = bucketHead(bucket)
+        val candidateArgsEqHash = argsEqHash
+
+        @tailrec
+        def linkedListLoop(entry: Entry[AppliedType] | Null): AppliedType = entry match
+          case null                    => addPagedEntryAt(bucket, newType(candidateArgsEqHash), h, oldHead)
+          case _                       =>
+            if entry.hash == h then
+              val e = entry.elem
+              if (e.tycon eq tycon) && e.argsEqHash == candidateArgsEqHash
+                 && sameArgs1(e.args, arg) then e
+              else linkedListLoop(entry.tail)
+            else linkedListLoop(entry.tail)
+
+        linkedListLoop(oldHead)
+      end if
+
+    def enterIfNew(tycon: Type, arg1: Type, arg2: Type): AppliedType =
+      val argsEqHash = (31 + System.identityHashCode(arg1)) * 31 + System.identityHashCode(arg2)
+      val tyconHash = tycon.hash
+      val h =
+        if tyconHash == NotCached then NotCached
+        else
+          val arg1Hash = arg1.hash
+          if arg1Hash == NotCached then NotCached
+          else
+            val arg2Hash = arg2.hash
+            if arg2Hash == NotCached then NotCached
+            else
+              finishHash(hashing.mix(hashing.mix(hashing.mix(appliedHashSeed, tyconHash), arg1Hash), arg2Hash), 3)
+      def newType(argsEqHash: Int) = new CachedAppliedType(tycon, arg1 :: arg2 :: Nil, h, argsEqHash)
+      if monitored then recordCaching(h, classOf[CachedAppliedType])
+      if h == NotCached then newType(argsEqHash)
+      else
+        // Inlined from StrongHashSet#put
+        Stats.record(statsItem("put"))
+        val bucket = bucketIndex(h)
+        val oldHead = bucketHead(bucket)
+        val candidateArgsEqHash = argsEqHash
+
+        @tailrec
+        def linkedListLoop(entry: Entry[AppliedType] | Null): AppliedType = entry match
+          case null                    => addPagedEntryAt(bucket, newType(candidateArgsEqHash), h, oldHead)
+          case _                       =>
+            if entry.hash == h then
+              val e = entry.elem
+              if (e.tycon eq tycon) && e.argsEqHash == candidateArgsEqHash
+                 && sameArgs2(e.args, arg1, arg2) then e
+              else linkedListLoop(entry.tail)
+            else linkedListLoop(entry.tail)
+
+        linkedListLoop(oldHead)
+      end if
 
     def enterIfNew(tycon: Type, args: List[Type]): AppliedType =
       var argsEqHash = 1
@@ -405,9 +441,8 @@ object Uniques:
       if monitored then recordCaching(h, classOf[CachedAppliedType])
       if h == NotCached then newType(argsEqHash)
       else
-        // Inlined from WeakHashSet#put
+        // Inlined from StrongHashSet#put
         Stats.record(statsItem("put"))
-        removeStaleEntries()
         val bucket = bucketIndex(h)
         val oldHead = bucketHead(bucket)
         // Pre-filter probe: compare a cheap identity-hash of args
@@ -419,8 +454,8 @@ object Uniques:
           case null                    => addPagedEntryAt(bucket, newType(candidateArgsEqHash), h, oldHead)
           case _                       =>
             if entry.hash == h then
-              val e = entry.get
-              if e != null && (e.tycon eq tycon) && e.argsEqHash == candidateArgsEqHash
+              val e = entry.elem
+              if (e.tycon eq tycon) && e.argsEqHash == candidateArgsEqHash
                  && ((e.args eq args) || e.args.eqElements(args)) then e
               else linkedListLoop(entry.tail)
             else linkedListLoop(entry.tail)
