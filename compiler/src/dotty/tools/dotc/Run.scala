@@ -67,6 +67,11 @@ extends ImplicitRunInfo, ConstraintRunInfo, cc.CaptureRunInfo {
 
   private var compiling = false
 
+  /** Cache of unpickled quote trees, shared by all macro expansions of this run
+   *  (see `MacroExpansion.context`) and dropped with the run.
+   */
+  val quotesCache: quoted.QuotesCache.QuoteCache = quoted.QuotesCache.mkCache()
+
   private var myUnits: List[CompilationUnit] = Nil
   private var myUnitsCached: List[CompilationUnit] = Nil
   private var myFiles: Set[AbstractFile] = Set.empty

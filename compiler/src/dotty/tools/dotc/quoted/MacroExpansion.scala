@@ -13,6 +13,11 @@ object MacroExpansion {
     ctx.property(MacroExpansionPosition)
 
   def context(inlinedFrom: tpd.Tree)(using Context): Context =
-    QuotesCache.init(ctx.fresh).setProperty(MacroExpansionPosition, inlinedFrom.sourcePos).setTypeAssigner(new Typer(ctx.nestingLevel + 1)).withSource(inlinedFrom.source)
+    // Reuse the run-scoped quotes cache so that repeated macro expansions do
+    // not re-unpickle the same pickled quote payloads. The cache lives for the
+    // duration of the current run and is dropped with it.
+    val run = ctx.run
+    val cache = if run == null then QuotesCache.mkCache() else run.quotesCache
+    QuotesCache.init(ctx.fresh, cache).setProperty(MacroExpansionPosition, inlinedFrom.sourcePos).setTypeAssigner(new Typer(ctx.nestingLevel + 1)).withSource(inlinedFrom.source)
 }
 
