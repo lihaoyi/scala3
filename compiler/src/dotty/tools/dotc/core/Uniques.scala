@@ -5,12 +5,18 @@ import Types.*, Contexts.*, util.Stats.*, Hashable.*, Names.*
 import config.Config
 import Symbols.Symbol
 import Decorators.*
-import util.{WeakHashSet, Stats}
+import util.{WeakHashSet, StrongHashSet, Stats}
 import WeakHashSet.Entry
 import scala.annotation.tailrec
 import scala.util.hashing.{MurmurHash3 => hashing}
 
-class Uniques extends WeakHashSet[Type](Config.initialUniquesCapacity):
+/** A strong hash-consing table for generic unique types (TypeBounds, prototypes, ...).
+ *  Entries are held strongly and the table is cleared wholesale at every run
+ *  boundary (ContextBase.reset()), so it is sized for the full per-run insert
+ *  volume up front: entries are never shed, hence the table would otherwise
+ *  resize (and rehash) mid-run.
+ */
+class Uniques extends StrongHashSet[Type](Config.initialUniquesCapacity * 4):
   override def hash(x: Type): Int = x.hash
   override def isEqual(x: Type, y: Type) = x.eql(y)
 
@@ -36,7 +42,11 @@ object Uniques:
     if tp.hash == NotCached then tp
     else ctx.uniques.put(tp).asInstanceOf[T]
 
-  final class NamedTypeUniques extends WeakHashSet[NamedType](Config.initialUniquesCapacity * 4) with Hashable:
+  /** Strong hash-consing table for NamedTypes, cleared at every run boundary.
+   *  Like the generic `Uniques` table above, it holds entries strongly and is
+   *  sized for the full per-run insert volume to avoid mid-run resizes.
+   */
+  final class NamedTypeUniques extends StrongHashSet[NamedType](Config.initialUniquesCapacity * 8) with Hashable:
     override def hash(x: NamedType): Int = x.hash
 
     def enterIfNew(prefix: Type, designator: Designator, isTerm: Boolean)(using Context): NamedType =
@@ -49,19 +59,18 @@ object Uniques:
         catch case ex: InvalidPrefix => badPrefix(prefix, designator)
       if h == NotCached then newType
       else
-        // Inlined from WeakHashSet#put
+        // Inlined from StrongHashSet#put
         Stats.record(statsItem("put"))
-        removeStaleEntries()
         val bucket = index(h)
         val oldHead = table(bucket)
 
         @tailrec
-        def linkedListLoop(entry: Entry[NamedType] | Null): NamedType = entry match
+        def linkedListLoop(entry: StrongHashSet.Entry[NamedType] | Null): NamedType = entry match
           case null                    => addEntryAt(bucket, newType, h, oldHead)
           case _                       =>
             if entry.hash == h then
-              val e = entry.get
-              if e != null && (e.prefix eq prefix) && (e.designator eq designator) && (e.isTerm == isTerm) then e
+              val e = entry.elem
+              if (e.prefix eq prefix) && (e.designator eq designator) && (e.isTerm == isTerm) then e
               else linkedListLoop(entry.tail)
             else linkedListLoop(entry.tail)
 
