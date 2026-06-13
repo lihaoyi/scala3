@@ -16,7 +16,7 @@ import scala.util.hashing.{MurmurHash3 => hashing}
  *  volume up front: entries are never shed, hence the table would otherwise
  *  resize (and rehash) mid-run.
  */
-class Uniques extends StrongHashSet[Type](Config.initialUniquesCapacity * 4) with Hashable:
+class Uniques extends StrongHashSet[Type](Config.initialUniquesCapacity * 2) with Hashable:
   private val cachedConstantTypeHashSeed = classOf[CachedConstantType].hashCode
   private val cachedExprTypeHashSeed = classOf[CachedExprType].hashCode
   private val cachedAnnotatedTypeHashSeed = classOf[CachedAnnotatedType].hashCode
