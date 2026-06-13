@@ -2,6 +2,7 @@ package dotty.tools
 package dotc
 
 import core.*
+import ast.tpd
 import Contexts.*
 import Periods.*
 import Symbols.*
@@ -71,6 +72,10 @@ extends ImplicitRunInfo, ConstraintRunInfo, cc.CaptureRunInfo {
    *  (see `MacroExpansion.context`) and dropped with the run.
    */
   val quotesCache: quoted.QuotesCache.QuoteCache = quoted.QuotesCache.mkCache()
+
+  /** Cache of synthesized quote reflection definition trees for this run. */
+  private[dotc] val fromSymbolDefinitionCache: EqHashMap[Symbol, tpd.Tree] =
+    EqHashMap[Symbol, tpd.Tree](initialCapacity = 2048)
 
   private var myUnits: List[CompilationUnit] = Nil
   private var myUnitsCached: List[CompilationUnit] = Nil
