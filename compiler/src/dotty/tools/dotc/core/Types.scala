@@ -2293,7 +2293,7 @@ object Types extends TypeUtils {
 
   /**  Instances of this class are cached and are proxies. */
   abstract class CachedProxyType extends TypeProxy with CachedType {
-    protected var myHash: Int = HashUnknown
+    private[core] var myHash: Int = HashUnknown
     final def hash: Int = {
       if (myHash == HashUnknown) {
         myHash = computeHash(null)
@@ -2413,6 +2413,7 @@ object Types extends TypeUtils {
     private var myStableHash: Byte = 0
     private var mySignature: Signature = uninitialized
     private var mySignatureRunId: RunId = NoRunId
+    private[core] var uniqNext: NamedType | Null = null
 
     // Invariants:
     // (1) checkedPeriod != Nowhere     =>  lastDenotation != null

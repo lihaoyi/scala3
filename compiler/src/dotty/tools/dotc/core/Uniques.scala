@@ -130,8 +130,56 @@ object Uniques:
    *  Like the generic `Uniques` table above, it holds entries strongly and is
    *  sized for the full per-run insert volume to avoid mid-run resizes.
    */
-  final class NamedTypeUniques extends StrongHashSet[NamedType](Config.initialUniquesCapacity * 8) with Hashable:
-    override def hash(x: NamedType): Int = x.hash
+  final class NamedTypeUniques extends Hashable:
+    private val initialCapacity = computeCapacity(Config.initialUniquesCapacity * 8)
+    private var table = new Array[NamedType | Null](initialCapacity)
+    private var mask = table.length - 1
+    private var threshold = computeThreshold()
+    private var count = 0
+
+    private def computeCapacity(initialCapacity: Int): Int =
+      if initialCapacity < 0 then throw new IllegalArgumentException("initial capacity cannot be less than 0")
+      var candidate = 1
+      while candidate < initialCapacity do candidate *= 2
+      candidate
+
+    private def computeThreshold(): Int = table.length >> 1
+
+    private inline def index(h: Int): Int = h & mask
+
+    private def resetTable(capacity: Int): Unit =
+      table = new Array[NamedType | Null](capacity)
+      mask = table.length - 1
+      threshold = computeThreshold()
+
+    private def statsItem(op: String): String =
+      s"StrongHashSet.$op ${getClass.getSimpleName}"
+
+    private def resize(): Unit =
+      Stats.record(statsItem("resize"))
+      val oldTable = table
+      table = new Array[NamedType | Null](oldTable.length * 2)
+      mask = table.length - 1
+      threshold = computeThreshold()
+
+      var oldBucket = 0
+      while oldBucket < oldTable.length do
+        var entry = oldTable(oldBucket)
+        while entry != null do
+          val next = entry.uniqNext
+          val bucket = index(entry.myHash)
+          entry.uniqNext = table(bucket)
+          table(bucket) = entry
+          entry = next
+        oldBucket += 1
+
+    private def addEntryAt(bucket: Int, elem: NamedType, oldHead: NamedType | Null): NamedType =
+      Stats.record(statsItem("addEntryAt"))
+      elem.uniqNext = oldHead
+      table(bucket) = elem
+      count += 1
+      if count > threshold then resize()
+      elem
 
     def enterIfNew(prefix: Type, designator: Designator, isTerm: Boolean)(using Context): NamedType =
       val h = doHash(null, designator, prefix)
@@ -143,24 +191,45 @@ object Uniques:
         catch case ex: InvalidPrefix => badPrefix(prefix, designator)
       if h == NotCached then newType
       else
-        // Inlined from StrongHashSet#put
+        // Inlined from StrongHashSet#put, using the NamedType instance as the bucket-chain cell.
         Stats.record(statsItem("put"))
         val bucket = index(h)
         val oldHead = table(bucket)
 
         @tailrec
-        def linkedListLoop(entry: StrongHashSet.Entry[NamedType] | Null): NamedType = entry match
-          case null                    => addEntryAt(bucket, newType, h, oldHead)
-          case _                       =>
-            if entry.hash == h then
-              val e = entry.elem
-              if (e.prefix eq prefix) && (e.designator eq designator) && (e.isTerm == isTerm) then e
-              else linkedListLoop(entry.tail)
-            else linkedListLoop(entry.tail)
+        def linkedListLoop(entry: NamedType | Null): NamedType = entry match
+          case null => addEntryAt(bucket, newType, oldHead)
+          case e =>
+            if e.myHash == h
+               && (e.prefix eq prefix)
+               && (e.designator eq designator)
+               && (e.isTerm == isTerm)
+            then e
+            else linkedListLoop(e.uniqNext)
 
         linkedListLoop(oldHead)
       end if
     end enterIfNew
+
+    def clear(resetToInitial: Boolean = true): Unit =
+      if count != 0 || (resetToInitial && table.length != initialCapacity) then
+        var bucket = 0
+        while bucket < table.length do
+          var entry = table(bucket)
+          while entry != null do
+            val next = entry.uniqNext
+            entry.uniqNext = null
+            entry = next
+          bucket += 1
+        if resetToInitial then resetTable(initialCapacity)
+        else
+          bucket = 0
+          while bucket < table.length do
+            table(bucket) = null
+            bucket += 1
+          mask = table.length - 1
+          threshold = computeThreshold()
+        count = 0
 
     private def badPrefix(prefix: Type, desig: Designator)(using Context): Nothing =
       def name = desig match
